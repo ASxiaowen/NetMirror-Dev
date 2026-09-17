@@ -86,10 +86,12 @@ const copyToClipboard = async (text, buttonRef = null) => {
 </script>
 
 <template>
-  <div
-    class="bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm rounded-xl shadow-lg border border-primary-200/30 dark:border-primary-700/30 overflow-hidden animate-slide-up">
+  <!-- === CUSTOM START: 去掉外层卡片 - By ASxiaowen === -->
+  <!-- 理由: 该组件已被并入 App.vue 的 .lg-card 节点卡内，外层再套一张白卡会变成"卡中卡"；
+         这里去掉外层容器样式，只保留内部内容结构。 -->
+  <div>
     <!-- Node Selection Info Header -->
-    <div v-if="selectedNode" class="bg-blue-50 dark:bg-blue-900/20 border-b border-blue-200 dark:border-blue-700 p-4">
+    <div v-if="selectedNode" class="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded p-3 mb-4">
       <div class="flex items-center">
         <div class="w-2 h-2 bg-blue-500 rounded-full mr-3"></div>
         <div>
@@ -99,7 +101,7 @@ const copyToClipboard = async (text, buttonRef = null) => {
       </div>
     </div>
 
-    <div class="p-6">
+    <div>
       <div v-if="currentConfig" class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
         <div class="space-y-4">
           <div>
@@ -204,6 +206,7 @@ const copyToClipboard = async (text, buttonRef = null) => {
       <p class="text-gray-500 dark:text-gray-400">Please select a node to view network information.</p>
     </div>
   </div>
+  <!-- === CUSTOM END: 去掉外层卡片 === -->
 </template>
 
 <style scoped>

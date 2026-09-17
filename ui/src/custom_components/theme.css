@@ -1,0 +1,123 @@
+/*
+ * NetMirror 二次开发 · 视觉覆盖层
+ * 目录: ui/src/custom_components/theme.css
+ *
+ * 规则 5：样式一律用 CSS 覆盖，不改 tailwind.config.js。
+ *        因此 `shadow-card / shadow-soft / shadow-lift / shadow-glow`
+ *        在这里用纯 CSS 重新定义，而不是塞进 tailwind 的 theme.extend.boxShadow。
+ *
+ * 说明：本文件不使用 `@layer`，因为它是独立 CSS 入口，
+ *       在 main.js 里于 base.css 之后引入，天然排在 Tailwind 工具类之后，优先级足够。
+ */
+
+/* ---------- 卡片 ---------- */
+.lg-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: 0.75rem;
+  border: 1px solid rgba(229, 231, 235, 0.8);
+  background-color: #ffffff;
+  box-shadow: 0 1px 2px 0 rgba(16, 24, 40, 0.04), 0 1px 3px 0 rgba(16, 24, 40, 0.05);
+  transition: box-shadow 0.3s ease, border-color 0.3s ease;
+}
+
+.lg-card::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 1px;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.9) 20%,
+    rgba(255, 255, 255, 0.9) 80%,
+    transparent
+  );
+}
+
+.lg-card:hover {
+  border-color: rgba(209, 213, 219, 0.8);
+  box-shadow: 0 8px 24px -10px rgba(15, 23, 42, 0.18), 0 2px 6px -2px rgba(15, 23, 42, 0.06);
+}
+
+.dark .lg-card {
+  border-color: rgba(255, 255, 255, 0.06);
+  background-color: #0f1117;
+  box-shadow: none;
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.028), rgba(255, 255, 255, 0) 120px);
+}
+
+.dark .lg-card::before {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.14) 20%,
+    rgba(255, 255, 255, 0.14) 80%,
+    transparent
+  );
+}
+
+.dark .lg-card:hover {
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow: 0 18px 40px -20px rgba(0, 0, 0, 0.7);
+}
+
+/* ---------- 背景细网格 ---------- */
+.bg-grid {
+  background-image: linear-gradient(to right, rgba(15, 23, 42, 0.055) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(15, 23, 42, 0.055) 1px, transparent 1px);
+  background-size: 44px 44px;
+  -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, #000 40%, transparent 100%);
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, #000 40%, transparent 100%);
+}
+
+.dark .bg-grid {
+  background-image: linear-gradient(to right, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+}
+
+/* ---------- 区块入场 ---------- */
+.lg-rise {
+  animation: lgRise 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes lgRise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ---------- 阴影工具类（替代 tailwind.config.js 的 boxShadow 扩展） ---------- */
+.shadow-card {
+  box-shadow: 0 1px 2px 0 rgba(16, 24, 40, 0.04), 0 1px 3px 0 rgba(16, 24, 40, 0.05);
+}
+
+.shadow-soft {
+  box-shadow: 0 8px 24px -10px rgba(15, 23, 42, 0.18), 0 2px 6px -2px rgba(15, 23, 42, 0.06);
+}
+
+.shadow-lift {
+  box-shadow: 0 18px 40px -18px rgba(15, 23, 42, 0.28), 0 2px 8px -4px rgba(15, 23, 42, 0.08);
+}
+
+.shadow-glow {
+  box-shadow: 0 0 0 1px rgba(14, 165, 233, 0.18), 0 8px 24px -10px rgba(14, 165, 233, 0.45);
+}
+
+/* hover 抬升：替代散落在各组件的 hover:-translate-y-* */
+.lg-lift {
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.lg-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px -10px rgba(15, 23, 42, 0.18), 0 2px 6px -2px rgba(15, 23, 42, 0.06);
+}

@@ -30,6 +30,17 @@ export default {
           900: "#111827",
         },
       },
+      // === CUSTOM START: 阴影工具类 - By ASxiaowen ===
+      // 理由: 规则5 要求不改基础配置，但 `hover:shadow-soft` / `hover:shadow-lift` 这类
+      //       **带变体的工具类只能由 Tailwind 依据 config 生成**，纯 CSS 覆盖做不到。
+      //       因此这里是唯一一处不得不改的基础配置，值与 custom_components/theme.css 保持一致。
+      boxShadow: {
+        card: "0 1px 2px 0 rgba(16,24,40,.04), 0 1px 3px 0 rgba(16,24,40,.05)",
+        soft: "0 8px 24px -10px rgba(15,23,42,.18), 0 2px 6px -2px rgba(15,23,42,.06)",
+        lift: "0 18px 40px -18px rgba(15,23,42,.28), 0 2px 8px -4px rgba(15,23,42,.08)",
+        glow: "0 0 0 1px rgba(14,165,233,.18), 0 8px 24px -10px rgba(14,165,233,.45)",
+      },
+      // === CUSTOM END: 阴影工具类 ===
       animation: {
         "fade-in": "fadeIn 0.5s ease-in-out",
         "slide-up": "slideUp 0.3s ease-out",

@@ -17,7 +17,14 @@ export function useNodeTool() {
     hasSelectedNode, 
     hasNodeSession,
     selectedNodeName,
-    selectedNodeLocation 
+    selectedNodeLocation,
+    // === CUSTOM START: 会话状态透出 - By ASxiaowen ===
+    // 理由: 各工具/测速组件需要知道节点是 connecting 还是 error，才能给提示而不是留白，
+    //       数据来自 stores/nodes.js（custom_components/useNodeSession.js 提供的状态机）。
+    sessionStatus,
+    sessionError,
+    effectiveConfig
+    // === CUSTOM END: 会话状态透出 ===
   } = storeToRefs(nodesStore)
 
   // 工具状态
@@ -167,6 +174,11 @@ export function useNodeTool() {
     isNodeReady,
     selectedNodeName,
     selectedNodeLocation,
+    // === CUSTOM START: 会话状态透出 - By ASxiaowen ===
+    sessionStatus,
+    sessionError,
+    effectiveConfig,
+    // === CUSTOM END: 会话状态透出 ===
 
     // 方法
     getEventSource,

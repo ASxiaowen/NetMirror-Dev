@@ -25,3 +25,16 @@ logs/
 *.temp
 
 Dockerfile
+
+# === CUSTOM START: 本地运维脚本不入库 - By ASxiaowen ===
+# 理由: 这些脚本里写死了服务器 root 密码与内网地址，而 NetMirror-Dev 是公开仓库，不能提交。
+.workbuddy/
+deploy_ui.py
+update_ui.py
+verify_ui.py
+sftp_get.py
+ssh_run.py
+ssh_try.py
+nginx-full.conf
+nginx-netmirror.conf
+# === CUSTOM END: 本地运维脚本不入库 ===

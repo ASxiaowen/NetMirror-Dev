@@ -148,7 +148,7 @@ const createGraph = (interfaceName) => {
         borderColor: '#374151',
         strokeDashArray: 3
       },
-      colors: ['#10b981', '#8b5cf6']
+      colors: ['#22c55e', '#3b82f6']
     },
     series: [
       {
@@ -320,43 +320,53 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div ref="cardRef" class="bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm rounded-xl shadow-lg border border-primary-200/30 dark:border-primary-700/30 overflow-hidden">
-    <div class="p-6">
+  <div ref="cardRef">
+    <div>
       <div v-if="Object.keys(interfaces).length === 0" class="text-center py-12">
-        <ChartBarIcon class="w-16 h-16 text-gray-400/50 dark:text-gray-500/50 mx-auto mb-4" />
-        <h3 class="text-lg font-medium text-gray-700 dark:text-gray-300 mb-2">No Traffic Data</h3>
-        <p class="text-gray-500 dark:text-gray-400">Waiting for network interface data...</p>
+        <div class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-gray-50 dark:bg-white/[0.03] ring-1 ring-inset ring-gray-200/70 dark:ring-white/[0.06]">
+          <ChartBarIcon class="w-7 h-7 text-gray-300 dark:text-gray-600" />
+        </div>
+        <h3 class="text-[13px] font-medium text-gray-700 dark:text-gray-300 mb-1">No Traffic Data</h3>
+        <p class="text-[12px] text-gray-400 dark:text-gray-500">Waiting for network interface data...</p>
       </div>
       
-      <div v-else :class="Object.keys(interfaces).length === 1 ? 'block' : 'grid grid-cols-1 xl:grid-cols-2 gap-6'">
+      <!-- === CUSTOM START: 接口流量卡视觉 - By ASxiaowen === -->
+      <!-- 理由: 圆角卡片 + 阴影、Active 状态 pill + ping 圆点、20px 等宽数字；
+             原文件是平铺无卡片的列表；卡片阴影类在 custom_components/theme.css -->
+      <div v-else :class="Object.keys(interfaces).length === 1 ? 'block' : 'grid grid-cols-1 xl:grid-cols-2 gap-5'">
         <div 
           v-for="(interfaceData, interfaceName) in interfaces" 
           :key="interfaceName"
-          class="bg-gray-50 dark:bg-gray-700/50 rounded-xl p-6 border border-gray-200 dark:border-gray-600"
-          :class="Object.keys(interfaces).length === 1 ? 'mx-auto max-w-4xl' : ''"
+          class="rounded-xl border border-gray-200/80 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] p-4 md:p-5 shadow-card transition-all duration-300 hover:shadow-soft dark:hover:border-white/[0.1]"
+          :class="Object.keys(interfaces).length === 1 ? 'mx-auto max-w-lg' : ''"
         >
           <div class="flex items-center justify-between mb-4">
-            <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{{ interfaceName }}</h3>
-            <div class="flex items-center space-x-2">
-              <div class="w-3 h-3 bg-green-500 rounded-full"></div>
-              <span class="text-sm text-gray-600 dark:text-gray-400">Active</span>
-            </div>
+            <h3 class="font-mono text-[13px] font-semibold text-gray-900 dark:text-white">{{ interfaceName }}</h3>
+            <span class="inline-flex items-center gap-1.5 rounded-md bg-emerald-50 dark:bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-400">
+              <span class="relative flex h-1.5 w-1.5">
+                <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-70"></span>
+                <span class="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+              </span>
+              Active
+            </span>
           </div>
           
           <!-- Stats -->
           <div :class="Object.keys(interfaces).length === 1 ? 'flex justify-center gap-16 mb-6' : 'grid grid-cols-2 gap-4 mb-6'">
             <div class="text-center">
               <div class="flex items-center justify-center space-x-2 mb-2">
-                <ArrowDownIcon class="w-4 h-4 text-green-600 dark:text-green-400" />
-                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                <span class="flex h-6 w-6 items-center justify-center rounded-md bg-emerald-50 dark:bg-emerald-500/10">
+                  <ArrowDownIcon class="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                </span>
+                <span class="text-[11px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
                   {{ $t('server_bandwidth_graph_receive') }}
                 </span>
               </div>
               <div class="space-y-1">
-                <p class="text-lg font-bold text-green-600 dark:text-green-400">
+                <p class="text-[20px] font-semibold leading-none tabular-nums text-emerald-600 dark:text-emerald-400">
                   {{ formatBytes(interfaceData.traffic?.receive || 0, 1, true) }}
                 </p>
-                <p class="text-xs text-gray-500 dark:text-gray-400">
+                <p class="text-[11px] tabular-nums text-gray-400 dark:text-gray-500">
                   Total: {{ formatBytes(interfaceData.receive || 0) }}
                 </p>
               </div>
@@ -364,16 +374,18 @@ onUnmounted(() => {
             
             <div class="text-center">
               <div class="flex items-center justify-center space-x-2 mb-2">
-                <ArrowUpIcon class="w-4 h-4 text-purple-600 dark:text-purple-400" />
-                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                <span class="flex h-6 w-6 items-center justify-center rounded-md bg-blue-50 dark:bg-blue-500/10">
+                  <ArrowUpIcon class="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                </span>
+                <span class="text-[11px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
                   {{ $t('server_bandwidth_graph_sended') }}
                 </span>
               </div>
               <div class="space-y-1">
-                <p class="text-lg font-bold text-purple-600 dark:text-purple-400">
+                <p class="text-[20px] font-semibold leading-none tabular-nums text-blue-600 dark:text-blue-400">
                   {{ formatBytes(interfaceData.traffic?.send || 0, 1, true) }}
                 </p>
-                <p class="text-xs text-gray-500 dark:text-gray-400">
+                <p class="text-[11px] tabular-nums text-gray-400 dark:text-gray-500">
                   Total: {{ formatBytes(interfaceData.send || 0) }}
                 </p>
               </div>
@@ -381,11 +393,12 @@ onUnmounted(() => {
           </div>
           
           <!-- Chart -->
-          <div class="bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-600">
+          <div>
             <component :is="interfaceData.theComponent" />
           </div>
         </div>
       </div>
+      <!-- === CUSTOM END: 接口流量卡视觉 === -->
     </div>
   </div>
 </template>

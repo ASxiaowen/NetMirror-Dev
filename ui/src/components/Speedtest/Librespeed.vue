@@ -57,7 +57,7 @@ const uploadGauge = computed(() => gaugeValue(uploadText.value))
 
 const baseChartOptions = {
   chart: {
-    height: 150,
+    height: 120,
     foreColor: '#6b7280',
     animations: {
       enabled: true,
@@ -91,8 +91,23 @@ const baseChartOptions = {
     }
   },
   yaxis: {
-    show: false,
     min: 0,
+    labels: {
+      show: true,
+      // === CUSTOM START: 纵轴单位格式 - By ASxiaowen ===
+      // 理由: 上游默认格式带多位小数且无单位，这里统一取整并补 Mbps
+      formatter: (value) => Math.round(value) + 'Mbps',
+      // === CUSTOM END: 纵轴单位格式 ===
+      style: {
+        fontSize: '11px'
+      }
+    },
+    axisBorder: {
+      show: false
+    },
+    axisTicks: {
+      show: false
+    }
   },
   dataLabels: {
     enabled: false
@@ -317,18 +332,25 @@ onMounted(() => {
 </script>
 
 <template>
-  <div ref="containerRef" class="space-y-6">
+  <div ref="containerRef" class="space-y-5 max-w-4xl mx-auto">
     <!-- Results Display -->
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <!-- === CUSTOM START: 上下行结果卡视觉 - By ASxiaowen === -->
+    <!-- 理由: 圆角卡片 + 顶部高光模糊点 + 渐变图标方块 + 26px 等宽数字，
+           原文件是两块朴素面板；卡片阴影类在 custom_components/theme.css -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
       <!-- Download -->
-      <div class="bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-2xl p-6 border border-primary-200/30 dark:border-primary-700/30 relative overflow-hidden shadow-lg">
-        <div class="flex items-center space-x-4 mb-4">
-          <div class="flex items-center justify-center w-12 h-12 bg-primary-100 dark:bg-primary-900/30 rounded-xl flex-shrink-0">
-            <ArrowDownIcon class="w-6 h-6 text-primary-600 dark:text-primary-400" />
+      <div class="group relative overflow-hidden rounded-xl border border-gray-200/80 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] p-4 shadow-card transition-all duration-300 hover:shadow-soft dark:hover:border-white/[0.1]">
+        <div class="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-primary-400/10 blur-2xl"></div>
+        <div class="flex items-center space-x-3 mb-3">
+          <div class="flex items-center justify-center w-9 h-9 rounded-lg bg-gradient-to-br from-primary-500 to-sky-400 text-white shadow-sm flex-shrink-0">
+            <ArrowDownIcon class="w-[18px] h-[18px]" />
           </div>
-          <div>
-            <h4 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Download</h4>
-            <p class="text-3xl font-bold text-primary-600 dark:text-primary-400">{{ downloadText }} <span class="text-xl">Mbps</span></p>
+          <div class="min-w-0">
+            <h4 class="text-[13px] font-medium text-gray-500 dark:text-gray-400">下行</h4>
+            <p class="flex items-baseline gap-1">
+              <span class="text-[26px] font-semibold leading-none tabular-nums tracking-tight text-primary-600 dark:text-primary-400">{{ downloadText }}</span>
+              <span class="text-[11px] font-medium text-gray-400 dark:text-gray-500">Mbps</span>
+            </p>
           </div>
         </div>
         <VueApexCharts
@@ -340,14 +362,18 @@ onMounted(() => {
       </div>
 
       <!-- Upload -->
-      <div class="bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-2xl p-6 border border-primary-200/30 dark:border-primary-700/30 relative overflow-hidden shadow-lg">
-        <div class="flex items-center space-x-4 mb-4">
-          <div class="flex items-center justify-center w-12 h-12 bg-blue-100 dark:bg-blue-900/30 rounded-xl flex-shrink-0">
-            <ArrowUpIcon class="w-6 h-6 text-blue-600 dark:text-blue-400" />
+      <div class="group relative overflow-hidden rounded-xl border border-gray-200/80 dark:border-white/[0.06] bg-white dark:bg-white/[0.02] p-4 shadow-card transition-all duration-300 hover:shadow-soft dark:hover:border-white/[0.1]">
+        <div class="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-blue-400/10 blur-2xl"></div>
+        <div class="flex items-center space-x-3 mb-3">
+          <div class="flex items-center justify-center w-9 h-9 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-400 text-white shadow-sm flex-shrink-0">
+            <ArrowUpIcon class="w-[18px] h-[18px]" />
           </div>
-          <div>
-            <h4 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Upload</h4>
-            <p class="text-3xl font-bold text-blue-600 dark:text-blue-400">{{ uploadText }} <span class="text-xl">Mbps</span></p>
+          <div class="min-w-0">
+            <h4 class="text-[13px] font-medium text-gray-500 dark:text-gray-400">上行</h4>
+            <p class="flex items-baseline gap-1">
+              <span class="text-[26px] font-semibold leading-none tabular-nums tracking-tight text-blue-600 dark:text-blue-400">{{ uploadText }}</span>
+              <span class="text-[11px] font-medium text-gray-400 dark:text-gray-500">Mbps</span>
+            </p>
           </div>
         </div>
         <VueApexCharts
@@ -358,6 +384,7 @@ onMounted(() => {
         />
       </div>
     </div>
+    <!-- === CUSTOM END: 上下行结果卡视觉 === -->
 
     <!-- Error Message -->
     <div v-if="errorMessage" class="text-center">
@@ -365,22 +392,25 @@ onMounted(() => {
     </div>
 
     <!-- Control Button -->
-    <div class="text-center pt-4">
+    <!-- === CUSTOM START: 开始/停止按钮视觉 - By ASxiaowen === -->
+    <!-- 理由: 白色描边按钮 + hover 抬升，与全局卡片风格统一 -->
+    <div class="text-center">
       <button
         @click="startOrStopSpeedtest"
         :disabled="!currentSessionId && !working"
-        class="inline-flex items-center px-8 py-4 rounded-full font-semibold text-lg transition-all duration-300 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
+        class="inline-flex items-center px-5 py-2 rounded-lg text-[13px] font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
         :class="working
-          ? 'bg-red-500 hover:bg-red-600 text-white shadow-lg hover:shadow-red-500/30'
-          : 'bg-gradient-to-r from-primary-600 to-primary-700 hover:from-primary-700 hover:to-primary-800 text-white shadow-lg hover:shadow-primary-500/30'"
+          ? 'bg-red-500 hover:bg-red-600 text-white shadow-soft'
+          : 'border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.03] text-gray-700 dark:text-gray-200 shadow-sm hover:-translate-y-0.5 hover:border-primary-300 dark:hover:border-primary-500/40 hover:text-primary-600 dark:hover:text-primary-400 hover:shadow-soft'"
       >
-        <component :is="working ? StopIcon : PlayIcon" class="w-6 h-6 mr-3" />
+        <component :is="working ? StopIcon : PlayIcon" class="w-4 h-4 mr-2" />
         <span v-if="working" class="flex items-center">
-          <div class="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
+          <div class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
           Stop
         </span>
-        <span v-else>Begin test</span>
+        <span v-else>开始测试</span>
       </button>
     </div>
+    <!-- === CUSTOM END: 开始/停止按钮视觉 === -->
   </div>
 </template>

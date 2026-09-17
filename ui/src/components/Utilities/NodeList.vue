@@ -1,215 +1,142 @@
 <template>
   <div class="space-y-4">
-    <!-- Header with node count and refresh button - improved mobile layout -->
+    <!-- Header with node count and refresh button -->
     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-      <div class="text-sm text-gray-600 dark:text-gray-400 order-2 sm:order-1">
-        {{ nodes.length }} node{{ nodes.length !== 1 ? 's' : '' }} available
+      <div class="flex items-center gap-2 text-[12px] text-gray-500 dark:text-gray-400 order-2 sm:order-1">
+        <svg class="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"/>
+        </svg>
+        <span class="tabular-nums">{{ nodes.length }}</span>
+        <span>node{{ nodes.length !== 1 ? 's' : '' }} available</span>
       </div>
+      <!-- === CUSTOM START: 顶部操作按钮视觉 - By ASxiaowen === -->
+      <!-- 理由: 白底描边 + 图标 + hover 抬升，与全局按钮风格统一 -->
       <button
         @click="testAllLatencies"
         :disabled="loading"
-        class="inline-flex items-center justify-center px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 order-1 sm:order-2 w-full sm:w-auto"
-        :class="loading 
-          ? 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400 cursor-not-allowed'
-          : 'bg-primary-50 hover:bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:hover:bg-primary-900/50 dark:text-primary-400'"
+        class="group inline-flex items-center justify-center gap-2 rounded-lg border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.03] px-3 py-1.5 text-[13px] font-medium text-gray-600 dark:text-gray-300 shadow-sm transition-all duration-200 order-1 sm:order-2 w-full sm:w-auto hover:-translate-y-px hover:border-primary-300 hover:text-primary-600 dark:hover:text-primary-400 hover:shadow-soft disabled:pointer-events-none disabled:opacity-50"
       >
-        <svg 
-          class="w-4 h-4 mr-2" 
+        <svg
+          class="w-3.5 h-3.5 transition-transform duration-500 group-hover:rotate-180"
           :class="{ 'animate-spin': loading }"
-          fill="none" 
-          stroke="currentColor" 
+          fill="none"
+          stroke="currentColor"
           viewBox="0 0 24 24"
         >
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
         </svg>
         {{ loading ? 'Testing All Nodes...' : 'Refresh All Nodes' }}
       </button>
+      <!-- === CUSTOM END: 顶部操作按钮视觉 === -->
     </div>
 
-    <!-- Node Grid with Pagination - enhanced mobile responsiveness -->
-    <div class="relative">
-      <!-- Navigation Buttons - hidden on mobile for cleaner look -->
-      <button
-        v-if="totalPages > 1"
-        @click="goToPrevPage"
-        class="absolute left-0 top-1/2 transform -translate-y-1/2 z-10 w-10 h-10 bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm border border-gray-200 dark:border-gray-700 rounded-full shadow-lg transition-all duration-200 flex items-center justify-center opacity-0 hover:opacity-100 hover:bg-primary-50 dark:hover:bg-primary-900/30 hidden md:flex"
-        @mouseenter="$event.target.style.opacity = '1'"
-        @mouseleave="$event.target.style.opacity = '0'"
-      >
-        <svg class="w-5 h-5 text-gray-600 dark:text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+    <!-- Node dropdown selector -->
+    <div v-if="nodes.length > 0" class="space-y-3">
+      <div class="relative">
+        <!-- === CUSTOM START: 选择节点标签 - By ASxiaowen === -->
+        <!-- 理由: 加一个小号大写标签 + 地球图标，和 SectionTitle 的层级感对齐 -->
+        <label class="flex items-center gap-1.5 mb-1.5 text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-500">
+          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"/>
+          </svg>
+          Select node
+        </label>
+        <!-- === CUSTOM END: 选择节点标签 === -->
+        <select
+          :value="selectedUrl"
+          @change="selectByUrl($event.target.value)"
+          class="w-full appearance-none rounded-lg border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.03] py-2.5 pl-3 pr-10 text-[13px] font-medium text-gray-900 dark:text-gray-100 shadow-sm transition-all duration-200 hover:border-primary-300 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20 cursor-pointer"
+        >
+          <option value="" disabled>Choose a looking glass node</option>
+          <option v-for="node in nodes" :key="node.url" :value="node.url">
+            {{ node.name }} ({{ node.location }}) - {{ latencyText(node) }}{{ isCurrentNode(node) ? ' - Current' : '' }}
+          </option>
+        </select>
+        <svg class="w-4 h-4 text-gray-400 pointer-events-none absolute right-3 bottom-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
         </svg>
-      </button>
+      </div>
 
-      <button
-        v-if="totalPages > 1"
-        @click="goToNextPage"
-        class="absolute right-0 top-1/2 transform -translate-y-1/2 z-10 w-10 h-10 bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm border border-gray-200 dark:border-gray-700 rounded-full shadow-lg transition-all duration-200 flex items-center justify-center opacity-0 hover:opacity-100 hover:bg-primary-50 dark:hover:bg-primary-900/30 hidden md:flex"
-        @mouseenter="$event.target.style.opacity = '1'"
-        @mouseleave="$event.target.style.opacity = '0'"
+      <!-- === CUSTOM START: 选中节点状态条 - By ASxiaowen === -->
+      <!-- 理由: 上游没有这条状态条，切换节点后用户看不到“当前节点/延迟”；
+             灰底卡片 + 彩色延迟 pill + ping 涟漪点，与全局卡片风格一致 -->
+      <div
+        v-if="activeNode"
+        class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-lg border border-gray-200/70 dark:border-white/[0.06] bg-gray-50/60 dark:bg-white/[0.02] p-3 transition-colors duration-200"
       >
-        <svg class="w-5 h-5 text-gray-600 dark:text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-        </svg>
-      </button>
-
-      <!-- Grid Container - 紧凑布局 -->
-      <div class="relative" style="min-height: 140px;">
-        <transition name="slide">
-          <div :key="currentPage" class="grid grid-cols-2 md:grid-cols-4 gap-3 absolute inset-0">
-            <template v-for="node in currentPageNodes" :key="node.url">
-              <div
-                @click="selectNode(node)"
-                class="relative bg-white dark:bg-gray-800 rounded-xl shadow-sm hover:shadow-lg transition-all duration-300 border border-gray-200 dark:border-gray-700 hover:border-primary-500 overflow-hidden group cursor-pointer"
-                :class="{ 
-                  'ring-2 ring-primary-500': selectedNode && selectedNode.url === node.url,
-                  'ring-2 ring-blue-500': isCurrentNode(node) && (!selectedNode || selectedNode.url !== node.url)
-                }"
-              >
-                <!-- Background gradient on hover -->
-                <div class="absolute inset-0 bg-gradient-to-br from-primary-500/10 to-primary-600/10 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-                
-                <!-- 紧凑卡片布局 -->
-                <div class="relative p-3 pb-2 flex flex-col h-full min-h-[120px]">
-                  <!-- Header with name and current badge - 超紧凑布局 -->
-                  <div class="flex items-start justify-between mb-2">
-                    <div class="flex-1 min-w-0">
-                      <h3 class="text-sm font-semibold text-gray-900 dark:text-white group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors leading-tight mb-0.5">
-                        {{ node.name }}
-                      </h3>
-                      <p class="text-xs text-gray-600 dark:text-gray-400 leading-tight">{{ node.location }}</p>
-                    </div>
-                    <div class="ml-1.5 flex-shrink-0 flex flex-col space-y-1">
-                      <div v-if="isCurrentNode(node)">
-                        <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300">
-                          Current
-                        </span>
-                      </div>
-                      <div v-if="selectedNode && selectedNode.url === node.url">
-                        <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-primary-100 text-primary-800 dark:bg-primary-900 dark:text-primary-300">
-                          Selected
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <!-- Status Section - 超紧凑状态显示 -->
-                  <div class="flex items-center justify-between mb-2 flex-grow">
-                    <!-- Latency with icon -->
-                    <div class="flex items-center space-x-1.5">
-                      <div
-                        :key="`indicator-${getNodeKey(node)}`"
-                        class="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                        :class="{
-                          'bg-green-500': latencies[getNodeKey(node)]?.status === 'good',
-                          'bg-yellow-500': latencies[getNodeKey(node)]?.status === 'medium',
-                          'bg-red-500': latencies[getNodeKey(node)]?.status === 'high' || latencies[getNodeKey(node)]?.status === 'error',
-                          'bg-gray-400 animate-pulse': !latencies[getNodeKey(node)]
-                        }"
-                      ></div>
-                      <span :key="`latency-${getNodeKey(node)}`" class="text-xs font-semibold min-w-0" :class="{
-                        'text-green-600 dark:text-green-400': latencies[getNodeKey(node)]?.status === 'good',
-                        'text-yellow-600 dark:text-yellow-400': latencies[getNodeKey(node)]?.status === 'medium',
-                        'text-red-600 dark:text-red-400': latencies[getNodeKey(node)]?.status === 'high' || latencies[getNodeKey(node)]?.status === 'error',
-                        'text-gray-600 dark:text-gray-400': !latencies[getNodeKey(node)]
-                      }">
-                        <span v-if="!latencies[getNodeKey(node)]">Testing...</span>
-                        <span v-else-if="latencies[getNodeKey(node)].status === 'error'">Offline</span>
-                        <span v-else>{{ latencies[getNodeKey(node)].latency }}ms</span>
-                      </span>
-                    </div>
-                    
-                    <!-- Status Badge - 超小状态徽章 -->
-                    <div v-if="latencies[getNodeKey(node)]" :key="`status-${getNodeKey(node)}`" class="text-xs font-medium px-1.5 py-0.5 rounded flex-shrink-0" :class="{
-                      'bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-400': latencies[getNodeKey(node)].status === 'good',
-                      'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/50 dark:text-yellow-400': latencies[getNodeKey(node)].status === 'medium',
-                      'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-400': latencies[getNodeKey(node)].status === 'high',
-                      'bg-gray-100 text-gray-700 dark:bg-gray-900/50 dark:text-gray-400': latencies[getNodeKey(node)].status === 'error'
-                    }">
-                      {{ getStatusText(latencies[getNodeKey(node)]?.status) }}
-                    </div>
-                  </div>
-
-                  <!-- Bottom section - 超紧凑按钮区域 -->
-                  <div class="flex items-center justify-center mt-auto pt-1">
-                    <!-- Ping Button - 超小按钮 -->
-                    <button
-                      @click.stop.prevent="pingSingleNode(node)"
-                      :disabled="pingStates[getNodeKey(node)]?.isPinging"
-                      class="inline-flex items-center px-2 py-1.5 rounded text-xs font-medium transition-all duration-200 w-full justify-center"
-                      :class="pingStates[getNodeKey(node)]?.isPinging 
-                        ? 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400 cursor-not-allowed'
-                        : 'bg-primary-50 hover:bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:hover:bg-primary-900/50 dark:text-primary-400'"
-                    >
-                      <svg 
-                        v-if="pingStates[getNodeKey(node)]?.isPinging" 
-                        class="w-3 h-3 mr-1 animate-spin" 
-                        fill="none" 
-                        stroke="currentColor" 
-                        viewBox="0 0 24 24"
-                      >
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
-                      </svg>
-                      <svg 
-                        v-else
-                        class="w-3 h-3 mr-1" 
-                        fill="currentColor" 
-                        viewBox="0 0 24 24"
-                      >
-                        <path d="M13 10V3L4 14h7v7l9-11h-7z"/>
-                      </svg>
-                      <span>{{ pingStates[getNodeKey(node)]?.isPinging ? 'Testing...' : 'Test' }}</span>
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </template>
+        <div class="flex items-center space-x-3 min-w-0">
+          <span class="relative flex h-2.5 w-2.5 flex-shrink-0">
+            <span
+              v-if="latencies[getNodeKey(activeNode)] && latencies[getNodeKey(activeNode)].status !== 'error'"
+              class="absolute inline-flex h-full w-full rounded-full opacity-60 animate-ping"
+              :class="{
+                'bg-emerald-400': latencies[getNodeKey(activeNode)]?.status === 'good',
+                'bg-amber-400': latencies[getNodeKey(activeNode)]?.status === 'medium',
+                'bg-rose-400': latencies[getNodeKey(activeNode)]?.status === 'high'
+              }"
+            ></span>
+            <span
+              class="relative inline-flex h-2.5 w-2.5 rounded-full"
+              :class="{
+                'bg-emerald-500': latencies[getNodeKey(activeNode)]?.status === 'good',
+                'bg-amber-500': latencies[getNodeKey(activeNode)]?.status === 'medium',
+                'bg-rose-500': latencies[getNodeKey(activeNode)]?.status === 'high' || latencies[getNodeKey(activeNode)]?.status === 'error',
+                'bg-gray-400 animate-pulse': !latencies[getNodeKey(activeNode)]
+              }"
+            ></span>
+          </span>
+          <div class="min-w-0">
+            <p class="text-[13px] font-semibold text-gray-900 dark:text-white leading-tight truncate">
+              {{ activeNode.name }}
+              <span v-if="isCurrentNode(activeNode)" class="ml-1 rounded bg-primary-50 dark:bg-primary-500/10 px-1.5 py-0.5 align-middle text-[10px] font-medium text-primary-600 dark:text-primary-400">Current</span>
+            </p>
+            <p class="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400 leading-tight">
+              {{ activeNode.location }}
+              <span class="mx-1 text-gray-300 dark:text-gray-600">·</span>
+              <span
+                class="rounded px-1.5 py-0.5 font-mono text-[11px] tabular-nums"
+                :class="{
+                  'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400': latencies[getNodeKey(activeNode)]?.status === 'good',
+                  'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400': latencies[getNodeKey(activeNode)]?.status === 'medium',
+                  'bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-400': latencies[getNodeKey(activeNode)]?.status === 'high' || latencies[getNodeKey(activeNode)]?.status === 'error',
+                  'text-gray-500 dark:text-gray-400': !latencies[getNodeKey(activeNode)]
+                }">{{ latencyText(activeNode) }}</span>
+            </p>
           </div>
-        </transition>
-      </div>
-    </div>
-
-    <!-- Pagination Indicators - improved mobile layout -->
-    <div v-if="totalPages > 1" class="flex justify-center items-center space-x-3 pt-2">
-      <!-- Mobile navigation buttons -->
-      <button
-        @click="goToPrevPage"
-        class="md:hidden flex items-center justify-center w-8 h-8 rounded-full bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm border border-gray-200 dark:border-gray-700 shadow-sm transition-all duration-200 hover:bg-primary-50 dark:hover:bg-primary-900/30"
-      >
-        <svg class="w-4 h-4 text-gray-600 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
-        </svg>
-      </button>
-      
-      <!-- Page indicators -->
-      <div class="flex space-x-2">
+        </div>
         <button
-          v-for="page in totalPages"
-          :key="page"
-          @click="currentPage = page - 1"
-          class="w-2.5 h-2.5 rounded-full transition-all duration-200"
-          :class="currentPage === page - 1 
-            ? 'bg-primary-500 scale-125' 
-            : 'bg-gray-300 dark:bg-gray-600 hover:bg-primary-400 dark:hover:bg-primary-600'"
-        ></button>
+          @click="pingSingleNode(activeNode)"
+          :disabled="pingStates[getNodeKey(activeNode)]?.isPinging"
+          class="inline-flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-white/[0.03] px-3 py-1.5 text-[12px] font-medium text-gray-600 dark:text-gray-300 shadow-sm transition-all duration-200 flex-shrink-0 hover:-translate-y-px hover:border-primary-300 hover:text-primary-600 dark:hover:text-primary-400 hover:shadow-soft disabled:pointer-events-none disabled:opacity-50"
+        >
+          <svg
+            v-if="pingStates[getNodeKey(activeNode)]?.isPinging"
+            class="w-3.5 h-3.5 animate-spin"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+          </svg>
+          <svg
+            v-else
+            class="w-3.5 h-3.5"
+            fill="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path d="M13 10V3L4 14h7v7l9-11h-7z"/>
+          </svg>
+          <span>{{ pingStates[getNodeKey(activeNode)]?.isPinging ? 'Testing...' : 'Test' }}</span>
+        </button>
       </div>
-      
-      <!-- Mobile navigation buttons -->
-      <button
-        @click="goToNextPage"
-        class="md:hidden flex items-center justify-center w-8 h-8 rounded-full bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm border border-gray-200 dark:border-gray-700 shadow-sm transition-all duration-200 hover:bg-primary-50 dark:hover:bg-primary-900/30"
-      >
-        <svg class="w-4 h-4 text-gray-600 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-        </svg>
-      </button>
+      <!-- === CUSTOM END: 选中节点状态条 === -->
     </div>
 
-    <!-- Empty State - improved mobile styling -->
+    <!-- Empty State -->
     <div v-if="nodes.length === 0 && !loading" class="text-center py-12">
       <div class="mx-auto w-16 h-16 bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-800 rounded-full flex items-center justify-center mb-4">
         <svg class="w-8 h-8 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"></path>
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"></path>
         </svg>
       </div>
       <h3 class="text-base font-medium text-gray-900 dark:text-gray-100 mb-2">No nodes available</h3>
@@ -233,9 +160,6 @@ const {
   pingStates 
 } = storeToRefs(nodesStore)
 
-const currentPage = ref(0)
-const windowWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1024)
-
 let latencyInterval = null
 
 // Use store methods
@@ -249,57 +173,28 @@ const {
   selectNode 
 } = nodesStore
 
-// 监听窗口大小变化
-const handleResize = () => {
-  windowWidth.value = window.innerWidth
-  // 如果当前页超出了新的总页数，回到第一页
-  if (currentPage.value >= totalPages.value) {
-    currentPage.value = 0
-  }
-}
-
-// 分页相关 - 固定一行显示，通过翻页浏览
-const nodesPerPage = computed(() => {
-  // 固定每页显示数量，保持一行布局
-  if (windowWidth.value < 768) {
-    return 2  // 移动端：每页2个节点（一行2个）
-  }
-  return 4    // 桌面端：每页4个节点（一行4个）
+// Dropdown value: falls back to the local node so the selector always shows something meaningful
+const selectedUrl = computed(() => selectedNode.value?.url || currentNode.value?.url || '')
+const activeNode = computed(() => {
+  const url = selectedUrl.value
+  return nodes.value.find((n) => n.url === url) || null
 })
 
-const totalPages = computed(() => Math.ceil(nodes.value.length / nodesPerPage.value))
-
-const currentPageNodes = computed(() => {
-  const startIndex = currentPage.value * nodesPerPage.value
-  const endIndex = startIndex + nodesPerPage.value
-  return nodes.value.slice(startIndex, endIndex)
-})
-
-// 导航函数 - 循环滚动
-const goToPrevPage = () => {
-  if (currentPage.value > 0) {
-    currentPage.value--
-  } else {
-    // 循环到最后一页
-    currentPage.value = totalPages.value - 1
-  }
+const selectByUrl = (url) => {
+  const node = nodes.value.find((n) => n.url === url)
+  if (node) selectNode(node)
 }
 
-const goToNextPage = () => {
-  if (currentPage.value < totalPages.value - 1) {
-    currentPage.value++
-  } else {
-    // 循环到第一页
-    currentPage.value = 0
-  }
+const latencyText = (node) => {
+  const l = latencies.value[getNodeKey(node)]
+  if (!l) return 'Testing...'
+  if (l.status === 'error') return 'Offline'
+  return `${l.latency}ms`
 }
 
 onMounted(() => {
   fetchNodes()
-  
-  // 添加窗口大小变化监听
-  window.addEventListener('resize', handleResize)
-  
+
   // Refresh latencies every 5 minutes (300,000 ms) to reduce system load.
   latencyInterval = setInterval(() => {
     testAllLatencies()
@@ -310,35 +205,5 @@ onUnmounted(() => {
   if (latencyInterval) {
     clearInterval(latencyInterval)
   }
-  window.removeEventListener('resize', handleResize)
 })
 </script>
-
-<style scoped>
-/* Page transition - 使用淡入淡出 + 缩放，避免移动到容器外部 */
-.slide-enter-active,
-.slide-leave-active {
-  transition: all 0.3s ease-out;
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  width: 100%;
-}
-
-.slide-enter-from {
-  opacity: 0;
-  transform: scale(0.95);
-}
-
-.slide-enter-to,
-.slide-leave-from {
-  opacity: 1;
-  transform: scale(1);
-}
-
-.slide-leave-to {
-  opacity: 0;
-  transform: scale(0.95);
-}
-</style>

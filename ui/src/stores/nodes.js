@@ -3,6 +3,13 @@ import { defineStore } from 'pinia'
 import axios from 'axios'
 import { useAppStore } from '@/stores/app'
 
+// === CUSTOM START: 节点 Session 状态机 - By ASxiaowen ===
+// 理由: 上游 selectNode() 建连失败会把 selectedNode 置空 → 整页空白，且过程无任何反馈。
+//       状态机（超时/重试/竞态令牌/配置兜底）整体放在 custom_components/useNodeSession.js，
+//       本文件只取状态与调用，避免在原文件里堆逻辑。
+import { useNodeSession } from '@/custom_components/useNodeSession'
+// === CUSTOM END: 节点 Session 状态机 ===
+
 export const useNodesStore = defineStore('nodes', () => {
   // 节点相关状态
   const nodes = ref([])
@@ -15,6 +22,18 @@ export const useNodesStore = defineStore('nodes', () => {
   // Session管理
   const selectedNodeSession = ref(null)
   const selectedNodeSource = ref(null)
+
+  // === CUSTOM START: 节点 Session 状态机 - By ASxiaowen ===
+  // 理由: sessionStatus / sessionError / lastConfig / 竞态令牌由 custom_components/useNodeSession.js 提供
+  const {
+    sessionStatus,
+    sessionError,
+    lastConfig,
+    nextToken,
+    isStale,
+    establishNodeSession
+  } = useNodeSession()
+  // === CUSTOM END: 节点 Session 状态机 ===
 
   // 生成节点唯一键
   const getNodeKey = (node) => {
@@ -60,50 +79,6 @@ export const useNodesStore = defineStore('nodes', () => {
       case 'error': return 'Offline'
       default: return 'Unknown'
     }
-  }
-
-  // 建立选定节点的Session连接
-  const establishNodeSession = async (node) => {
-    if (!node) return null
-
-    // 为所有节点（包括当前节点）建立独立的Session连接
-    return new Promise((resolve, reject) => {
-      const eventSource = new EventSource(`${node.url}/session`)
-      let sessionId = null
-      let nodeConfig = null
-
-      const timeout = setTimeout(() => {
-        eventSource.close()
-        reject(new Error('Session connection timeout'))
-      }, 10000)
-
-      eventSource.addEventListener('SessionId', (e) => {
-        sessionId = e.data
-        console.log('Node session established:', sessionId, 'for node:', node.name)
-      })
-
-      eventSource.addEventListener('Config', (e) => {
-        nodeConfig = JSON.parse(e.data)
-        console.log('Node config received for:', node.name, nodeConfig)
-        
-        // 只有当我们有了 sessionId 和 config 才算完成
-        if (sessionId && nodeConfig) {
-          clearTimeout(timeout)
-          resolve({
-            sessionId: sessionId,
-            source: eventSource,
-            config: nodeConfig
-          })
-        }
-      })
-
-      eventSource.onerror = (error) => {
-        clearTimeout(timeout)
-        eventSource.close()
-        console.error('Failed to establish session for node:', node.name, error)
-        reject(error)
-      }
-    })
   }
 
   // 清理选定节点的Session
@@ -211,37 +186,52 @@ export const useNodesStore = defineStore('nodes', () => {
     pingStates.value[nodeKey] = { isPinging: false }
   }
 
-  // 选择节点并建立Session
+  // === CUSTOM START: 选择节点时不清空页面 - By ASxiaowen ===
+  // 理由: 上游在 catch 里把 selectedNode 置空，导致切换/重连失败时整页空白且无法恢复。
+  //       这里改为：失败也保留 selectedNode，只把状态置为 error 并给出文案（页面顶部展示 + 重试）。
   const selectNode = async (node) => {
     if (!node || !nodes.value.includes(node)) return
 
-    try {
-      // 清理之前的Session
-      cleanupNodeSession()
-      
-      // 设置新的选定节点
-      selectedNode.value = node
-      console.log('Selecting node:', node)
+    // 本次切换的令牌，避免快速连点时旧请求的结果覆盖新请求
+    const token = nextToken()
 
-      // 建立Session连接
+    // 清理之前的Session
+    cleanupNodeSession()
+
+    // 设置新的选定节点（不清空 config：新配置到达前继续用旧配置渲染，避免页面整块空白）
+    selectedNode.value = node
+    sessionStatus.value = 'connecting'
+    sessionError.value = ''
+
+    try {
       const session = await establishNodeSession(node)
+
+      // 已经切到别的节点了，丢弃这次的结果
+      if (isStale(token)) {
+        session.source.close()
+        return
+      }
+
       selectedNodeSession.value = session.sessionId
       selectedNodeSource.value = session.source
-      
+
       // 将配置信息存储到节点对象中
       if (session.config) {
         selectedNode.value.config = session.config
-        console.log('Node config stored:', selectedNode.value.name, selectedNode.value.config)
+        lastConfig.value = session.config
       }
-      
-      console.log('Node session ready for:', node.name, 'SessionId:', session.sessionId)
+
+      sessionStatus.value = 'ready'
     } catch (error) {
-      console.error('Failed to select node:', error)
-      selectedNode.value = null
+      if (isStale(token)) return
+      // 失败时保留 selectedNode，页面不会变空白，只提示错误
       selectedNodeSession.value = null
       selectedNodeSource.value = null
+      sessionStatus.value = 'error'
+      sessionError.value = error?.message || '节点连接失败'
     }
   }
+  // === CUSTOM END: 选择节点时不清空页面 ===
 
   // 为选定节点创建API请求
   const createNodeRequest = async (method, data = {}, signal = null) => {
@@ -301,6 +291,15 @@ export const useNodesStore = defineStore('nodes', () => {
   const selectedNodeLocation = computed(() => selectedNode.value?.location || '')
   const hasNodeSession = computed(() => selectedNodeSession.value !== null)
 
+  // === CUSTOM START: 生效配置兜底 - By ASxiaowen ===
+  // 理由: 连接中/失败时 selectedNode.config 还没到或已失效，各区块靠 effectiveConfig
+  //       回落到上一次成功的配置，避免整块消失。
+  const effectiveConfig = computed(() => {
+    if (selectedNode.value && selectedNode.value.config) return selectedNode.value.config
+    return lastConfig.value
+  })
+  // === CUSTOM END: 生效配置兜底 ===
+
   return {
     // 状态
     nodes,
@@ -310,6 +309,10 @@ export const useNodesStore = defineStore('nodes', () => {
     loading,
     pingStates,
     selectedNodeSession,
+    // === CUSTOM START: 会话状态透出 - By ASxiaowen ===
+    sessionStatus,
+    sessionError,
+    // === CUSTOM END: 会话状态透出 ===
 
     // computed
     availableNodes,
@@ -317,6 +320,9 @@ export const useNodesStore = defineStore('nodes', () => {
     selectedNodeName,
     selectedNodeLocation,
     hasNodeSession,
+    // === CUSTOM START: 生效配置透出 - By ASxiaowen ===
+    effectiveConfig,
+    // === CUSTOM END: 生效配置透出 ===
 
     // 方法
     getNodeKey,
