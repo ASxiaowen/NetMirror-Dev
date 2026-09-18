@@ -313,18 +313,25 @@ const startOrStopSpeedtest = (force = false) => {
   // 理由: speedtest worker 用 XHR 直连节点，无法复用 apiClient 的请求头注入；
   //       下行是 GET、上行是带 Content-Encoding 的 POST，令牌只能走查询参数。
   //       后端 ExtractToken 支持 ?token=，因此这里统一附加。
+  //
+  // 注意顺序：**必须先把路径拼完，再挂令牌**。
+  // query 之后不能再出现路径片段 —— 若写成 appendToken(...) + '/speedtest/download'，
+  // 服务端看到的是 path=/session/<id>、query=token=<令牌>%2Fspeedtest%2Fdownload，
+  // 令牌被后半段污染 → Verify 失败 → 401 TOKEN_INVALID →
+  // 所有测速流静默重启（worker 的 xhr_ignoreErrors=1），下行显示 0.01、上行显示 0.00。
   const rawSessionUrl = baseUrl.value
     ? `${baseUrl.value}/session/${currentSessionId.value}`
     : `${window.location.origin}/session/${currentSessionId.value}`
-  const sessionUrl = appendToken(rawSessionUrl, null)
+  const urlDownload = appendToken(`${rawSessionUrl}/speedtest/download`, null)
+  const urlUpload = appendToken(`${rawSessionUrl}/speedtest/upload`, null)
   // === CUSTOM END: 测速 URL 携带访问令牌 ===
 
   workerInstance.postMessage(
     'start ' + JSON.stringify({
       test_order: 'D_U',
-      url_dl: `${sessionUrl}/speedtest/download`,
-      url_ul: `${sessionUrl}/speedtest/upload`,
-      url_ping: `${sessionUrl}/speedtest/upload`,
+      url_dl: urlDownload,
+      url_ul: urlUpload,
+      url_ping: urlUpload,
       url_getIp: '',  // 禁用 IP 查询，后端没有这个接口
       getIp_ispInfo: false
     })
