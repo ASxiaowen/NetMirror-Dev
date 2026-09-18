@@ -13,6 +13,11 @@
  */
 import { ref } from 'vue'
 import { uiConfig } from './ui.config.js'
+// === CUSTOM START: 会话 SSE 走统一 API 层 - By ASxiaowen ===
+// 理由: EventSource 不能自定义请求头，令牌必须由 apiClient 以 ?token= 形式附加，
+//       否则在启用登录门/临时链接后，节点会话一律 401。
+import { createEventSource } from './apiClient'
+// === CUSTOM END: 会话 SSE 走统一 API 层 ===
 
 export function useNodeSession() {
   /** idle | connecting | ready | error */
@@ -36,7 +41,10 @@ export function useNodeSession() {
    */
   const connectOnce = (node) => {
     return new Promise((resolve, reject) => {
-      const eventSource = new EventSource(`${node.url}/session`)
+      // === CUSTOM START: 会话 SSE 走统一 API 层 - By ASxiaowen ===
+      // 理由: 见文件顶部；apiClient 会按当前身份附加令牌查询参数。
+      const eventSource = createEventSource('/session', { node })
+      // === CUSTOM END: 会话 SSE 走统一 API 层 ===
       let sessionId = null
       let nodeConfig = null
       let settled = false

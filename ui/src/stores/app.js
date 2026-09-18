@@ -1,7 +1,13 @@
 import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
-import axios from 'axios'
 import { formatBytes } from '@/helper/unit'
+// === CUSTOM START: 统一 API 层 - By ASxiaowen ===
+// 理由: 会话 SSE 与工具请求原先直接 new EventSource / axios.create，散落在三个文件里。
+//       收敛到 custom_components/apiClient.js：统一注入认证令牌、统一错误分类；
+//       临时链接受限模式下还会把请求指向被绑定的节点。业务逻辑（重连、状态）不变。
+import { createEventSource, request } from '@/custom_components/apiClient'
+import { restrictedNode } from '@/custom_components/useShare'
+// === CUSTOM END: 统一 API 层 ===
 
 export const useAppStore = defineStore('app', () => {
   const source = ref()
@@ -64,7 +70,11 @@ export const useAppStore = defineStore('app', () => {
   const setupEventSource = () => {
     return new Promise((resolve, reject) => {
       connecting.value = true
-      const eventSource = new EventSource('./session')
+      // === CUSTOM START: 会话 SSE 走统一 API 层 - By ASxiaowen ===
+      // 理由: EventSource 无法设置请求头，令牌只能由 apiClient 以 ?token= 附加；
+      //       受限模式下指向被绑定节点，使临时链接的流量全部落在同一个节点上。
+      const eventSource = createEventSource('/session', { node: restrictedNode() })
+      // === CUSTOM END: 会话 SSE 走统一 API 层 ===
 
       eventSource.addEventListener('SessionId', (e) => {
         sessionId.value = e.data
@@ -100,44 +110,32 @@ export const useAppStore = defineStore('app', () => {
   }
 
   const requestMethod = (method, data = {}, signal = null) => {
-    let axiosConfig = {
+    // === CUSTOM START: 工具请求走统一 API 层 - By ASxiaowen ===
+    // 理由: 传输层换成 custom_components/apiClient（自动携带令牌、统一超时与错误分类），
+    //       原有的 resolve/reject 语义与 400 文案提示保持不变。
+    return request('/method/' + method, {
+      params: data,
+      session: sessionId.value,
       timeout: 1000 * 120, // 请求超时时间
-      headers: {
-        session: sessionId.value
-      }
-    }
-
-    if (signal != null) {
-      axiosConfig.signal = signal
-    }
-
-    const _axios = axios.create(axiosConfig)
-
-    return new Promise((resolve, reject) => {
-      _axios
-        .get('./method/' + method, { params: data })
-        .then((response) => {
-          if (response.data.success) {
-            resolve(response.data)
-            return
-          }
-          reject(response)
-        })
-        .catch((error) => {
-          if (error.code == 'ERR_CANCELED') {
-            reject(error)
-            return
-          }
-          
-          // Handle 400 Bad Request errors
-          if (error.response && error.response.status === 400) {
-            showToast('Bad Request, please check your input', 'error')
-          }
-          
-          console.error(error)
-          reject(error)
-        })
+      signal: signal || undefined,
+      node: restrictedNode()
     })
+      .then((payload) => {
+        if (payload && payload.success) return payload
+        return Promise.reject(payload)
+      })
+      .catch((error) => {
+        if (error && error.canceled) return Promise.reject(error)
+
+        // Handle 400 Bad Request errors
+        if (error && error.status === 400) {
+          showToast('Bad Request, please check your input', 'error')
+        }
+
+        console.error(error)
+        return Promise.reject(error)
+      })
+    // === CUSTOM END: 工具请求走统一 API 层 ===
   }
 
   // Toast methods

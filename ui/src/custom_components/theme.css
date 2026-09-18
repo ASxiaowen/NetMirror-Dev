@@ -121,3 +121,18 @@
   transform: translateY(-2px);
   box-shadow: 0 8px 24px -10px rgba(15, 23, 42, 0.18), 0 2px 6px -2px rgba(15, 23, 42, 0.06);
 }
+
+/* ---------- 临时链接受限模式 ----------
+ * 规则 5：不改上游组件的结构，用外层容器 + CSS 覆盖来收敛访客可触达的入口。
+ * .nm-restricted-mode 由 custom_components/RootShell.vue 包裹在 App 外层。
+ * ------------------------------------------------------------------ */
+
+/* 管理面板需要 X-Api-Key，访客没有凭据，留着只会打开一个报错面板。
+ * 上游按钮带固定的 title="Admin Panel"，这里按 title 精确命中，
+ * 不用 .fixed.bottom-8.right-8 这类位置选择器，避免误伤其它悬浮按钮。
+ *
+ * 其余入口（主题切换、回到顶部、节点延迟刷新）都不涉及权限，保持可用。 */
+.nm-restricted-mode button[title="Admin Panel"] {
+  display: none !important;
+}
+

@@ -5,6 +5,11 @@ import { useNodeTool } from '@/composables/useNodeTool'
 import { useNodesStore } from '@/stores/nodes'
 import FileSpeedtest from '@/components/Speedtest/FileSpeedtest.vue'
 import Librespeed from '@/components/Speedtest/Librespeed.vue'
+// === CUSTOM START: 临时链接功能白名单 - By ASxiaowen ===
+// 理由: 临时链接可能只授权了「LibreSpeed 测速」而未授权其它测速形式，
+//       未授权的一律不出现在分段控件里。两种测速同属 speedtest 权限。
+import { shareToolAllowed } from '@/custom_components/useShare'
+// === CUSTOM END: 临时链接功能白名单 ===
 
 const nodesStore = useNodesStore()
 const cardRef = ref()
@@ -32,12 +37,17 @@ const currentConfig = computed(() => {
 const availableTests = computed(() => {
   const tests = []
   const config = currentConfig.value
-  if (config?.feature_librespeed) {
+  // === CUSTOM START: 临时链接功能白名单 - By ASxiaowen ===
+  // 理由: 非受限模式下 shareToolAllowed 恒为 true，行为与上游一致；
+  //       受限模式下未授权「测速」时整块不出现。
+  const speedAllowed = shareToolAllowed('speedtest')
+  if (speedAllowed && config?.feature_librespeed) {
     tests.push({ id: 'librespeed', name: 'Librespeed' })
   }
-  if (config?.feature_filespeedtest) {
+  if (speedAllowed && config?.feature_filespeedtest) {
     tests.push({ id: 'filespeedtest', name: 'File-based Test' })
   }
+  // === CUSTOM END: 临时链接功能白名单 ===
   return tests
 })
 

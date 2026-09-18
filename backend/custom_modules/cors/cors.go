@@ -49,9 +49,35 @@ const AllowHeaders = "Content-Type, Content-Length, Accept-Encoding, Content-Enc
 // AllowedMethods 与上游保持一致。
 const AllowedMethods = "POST, OPTIONS, GET, PUT, DELETE"
 
+// setHeaders 写入与上游一致的 CORS 响应头。
+func setHeaders(c *gin.Context) {
+	h := c.Writer.Header()
+	h.Set("Access-Control-Allow-Origin", "*")
+	h.Set("Access-Control-Allow-Credentials", "true")
+	h.Set("Access-Control-Allow-Headers", AllowHeaders)
+	h.Set("Access-Control-Allow-Methods", AllowedMethods)
+}
+
+// EnsureHeaders 对所有请求预先写入 CORS 响应头，自身从不中止请求。
+//
+// 为什么需要它：二次开发的鉴权守卫（custom_modules/auth）注册在上游 CORS 中间件
+// **之前**，它返回 401/403 时会 Abort，导致上游那层不会执行 —— 错误响应就会丢掉
+// CORS 头，浏览器把「未登录」显示成 CORS 拦截，前端无法区分 AUTH_REQUIRED 与网络故障。
+// 在本模块（最外层）先把头写好，任何后续中止都会带着正确的头返回。
+//
+// 与上游中间件写入的值完全一致，因此上游再写一遍是无副作用的重复赋值。
+func EnsureHeaders() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		setHeaders(c)
+		c.Next()
+	}
+}
+
 // PreflightHandler 接管所有 OPTIONS 预检请求。
 //
-// 必须在 gin 引擎上注册于上游 CORS 中间件之前才能生效。
+// 必须与 EnsureHeaders 一起注册于上游 CORS 中间件之前才能生效：
+// 预检请求在路由树中会落到 NoRoute 分支，全局中间件按注册顺序执行，
+// 只要先于上游注册，就能在它 AbortWithStatus(204) 之前完成处理。
 func PreflightHandler() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// 非预检请求完全交给上游处理
@@ -59,13 +85,7 @@ func PreflightHandler() gin.HandlerFunc {
 			c.Next()
 			return
 		}
-
-		h := c.Writer.Header()
-		h.Set("Access-Control-Allow-Origin", "*")
-		h.Set("Access-Control-Allow-Credentials", "true")
-		h.Set("Access-Control-Allow-Headers", AllowHeaders)
-		h.Set("Access-Control-Allow-Methods", AllowedMethods)
-
+		setHeaders(c)
 		c.AbortWithStatus(http.StatusNoContent)
 	}
 }

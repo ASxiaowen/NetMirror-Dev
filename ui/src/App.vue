@@ -17,6 +17,11 @@ import NodeListCard from '@/components/Utilities/NodeList.vue'
 // 理由: SectionTitle 是新增组件，按规则2 放在 custom_components/，原 components/ 目录不动。
 import SectionTitle from '@/custom_components/SectionTitle.vue'
 // === CUSTOM END: 区块标题组件 ===
+// === CUSTOM START: 临时链接区块白名单 - By ASxiaowen ===
+// 理由: 受限模式下未授权的区块整块隐藏，否则会留下一个只有标题的空卡片。
+//       非受限模式下这两个判断恒为 true，与原行为完全一致。
+import { shareToolAllowed, hasAnyAllowedTool } from '@/custom_components/useShare'
+// === CUSTOM END: 临时链接区块白名单 ===
 
 const appStore = useAppStore()
 const nodesStore = useNodesStore()
@@ -57,6 +62,13 @@ const infoItems = computed(() => {
   return items
 })
 // === CUSTOM END: 服务器信息 chips ===
+
+// === CUSTOM START: 临时链接区块白名单 - By ASxiaowen ===
+// 理由: 见顶部 import 处说明。三个判断在非受限模式下全部为 true，零行为差异。
+const showToolsSection = computed(() => hasAnyAllowedTool())
+const showSpeedtestSection = computed(() => shareToolAllowed('speedtest'))
+const showTrafficSection = computed(() => shareToolAllowed('traffic'))
+// === CUSTOM END: 临时链接区块白名单 ===
 
 const currentLang = computed(() => {
   for (const lang of langList) {
@@ -204,7 +216,7 @@ onUnmounted(() => {
               </section>
 
               <!-- Network Tools -->
-              <section id="section-tools" data-section class="scroll-mt-24 lg-rise" style="animation-delay: .08s">
+              <section v-if="showToolsSection" id="section-tools" data-section class="scroll-mt-24 lg-rise" style="animation-delay: .08s">
                 <div class="lg-card p-4 md:p-6">
                   <SectionTitle :title="$t('network_tools')" />
                   <UtilitiesCard />
@@ -212,7 +224,7 @@ onUnmounted(() => {
               </section>
 
               <!-- Speed Test -->
-              <section id="section-speedtest" data-section class="scroll-mt-24 lg-rise" style="animation-delay: .14s">
+              <section v-if="showSpeedtestSection" id="section-speedtest" data-section class="scroll-mt-24 lg-rise" style="animation-delay: .14s">
                 <div class="lg-card p-4 md:p-6">
                   <SectionTitle :title="$t('server_speedtest')" />
                   <SpeedtestCard />
@@ -220,7 +232,7 @@ onUnmounted(() => {
               </section>
 
               <!-- Traffic Monitor -->
-              <section v-if="appStore.config.feature_iface_traffic" id="section-traffic" data-section class="scroll-mt-24 lg-rise" style="animation-delay: .2s">
+              <section v-if="appStore.config.feature_iface_traffic && showTrafficSection" id="section-traffic" data-section class="scroll-mt-24 lg-rise" style="animation-delay: .2s">
                 <div class="lg-card p-4 md:p-6">
                   <SectionTitle :title="$t('server_bandwidth_graph')" />
                   <TrafficCard />

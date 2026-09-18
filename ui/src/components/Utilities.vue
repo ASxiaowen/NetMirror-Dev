@@ -10,6 +10,10 @@ import { useNodeTool } from '@/composables/useNodeTool'
 import { toolIcon } from '@/custom_components/toolIcons'
 import ToolGrid from '@/custom_components/ToolGrid.vue'
 // === CUSTOM END: 工具图标与按钮网格引入 ===
+// === CUSTOM START: 临时链接工具白名单 - By ASxiaowen ===
+// 理由: 临时链接只授权部分功能，未授权的不出现在网格里（后端仍会二次校验，前端只是不给入口）。
+import { shareToolAllowed } from '@/custom_components/useShare'
+// === CUSTOM END: 临时链接工具白名单 ===
 
 const appStore = useAppStore()
 const nodesStore = useNodesStore()
@@ -200,7 +204,11 @@ tools.value.forEach((t) => {
 // 过滤可用的工具
 const availableTools = computed(() => {
   return tools.value.filter(tool => {
-    return config.value && config.value[tool.featureFlag]
+    if (!config.value || !config.value[tool.featureFlag]) return false
+    // === CUSTOM START: 临时链接工具白名单 - By ASxiaowen ===
+    // 理由: 受限模式下只显示该链接被授权的功能；非受限模式恒为 true（零行为差异）。
+    return shareToolAllowed(tool.id)
+    // === CUSTOM END: 临时链接工具白名单 ===
   })
 })
 

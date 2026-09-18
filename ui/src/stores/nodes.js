@@ -1,7 +1,15 @@
 import { ref, computed, watch } from 'vue'
 import { defineStore } from 'pinia'
-import axios from 'axios'
 import { useAppStore } from '@/stores/app'
+
+// === CUSTOM START: 统一 API 层与受限模式 - By ASxiaowen ===
+// 理由: /nodes 与节点请求原先直接 fetch / axios.create，散落在本文件三处。
+//       收敛到 custom_components/apiClient.js 统一注入令牌与错误分类；
+//       restrictedNode() 在临时链接受限模式下返回被绑定的节点，
+//       使节点列表、延迟探测、工具请求全部只落在那一个节点上。
+import { request } from '@/custom_components/apiClient'
+import { restrictedNode } from '@/custom_components/useShare'
+// === CUSTOM END: 统一 API 层与受限模式 ===
 
 // === CUSTOM START: 节点 Session 状态机 - By ASxiaowen ===
 // 理由: 上游 selectNode() 建连失败会把 selectedNode 置空 → 整页空白，且过程无任何反馈。
@@ -92,10 +100,21 @@ export const useNodesStore = defineStore('nodes', () => {
 
   // 获取节点列表
   const fetchNodes = async () => {
+    // === CUSTOM START: 临时链接受限模式 - By ASxiaowen ===
+    // 理由: 受限模式下不查询 /nodes —— 该接口可能为空（agent 模式）或不含被绑定的节点，
+    //       直接用作用域里的节点构造单节点列表，访客也无法切换到别的节点。
+    const locked = restrictedNode()
+    if (locked) {
+      nodes.value = [locked]
+      currentNode.value = locked
+      await selectNode(locked)
+      return
+    }
+    // === CUSTOM END: 临时链接受限模式 ===
+
     loading.value = true
     try {
-      const response = await fetch('/nodes')
-      const data = await response.json()
+      const data = await request('/nodes')
       if (data.success) {
         nodes.value = data.nodes || []
         console.log('Fetched nodes:', nodes.value)
@@ -125,32 +144,28 @@ export const useNodesStore = defineStore('nodes', () => {
     
     try {
       const timestamp = Date.now()
-      const targetUrl = isCurrentNode(node) ? '/nodes/latency' : `${node.url}/nodes/latency`
-      
-      const response = await fetch(`${targetUrl}?timestamp=${timestamp}`, {
-        method: 'GET',
-        mode: 'cors',
-        cache: 'no-cache',
-        signal: AbortSignal.timeout(5000)
+      // === CUSTOM START: 延迟探测走统一 API 层 - By ASxiaowen ===
+      // 理由: 传输层换成 apiClient（自动令牌/分类错误）。目标选择保持原语义：
+      //       受限模式一律用绑定节点；否则同源走相对路径，远程节点走绝对地址。
+      const data = await request('/nodes/latency', {
+        params: { timestamp },
+        timeout: 5000,
+        signal: AbortSignal.timeout(5000),
+        node: restrictedNode() || (isCurrentNode(node) ? null : node)
       })
-      
-      if (response.ok) {
-        const data = await response.json()
-        const latency = Date.now() - timestamp
-        console.log(`Latency response for ${node.name}:`, data)
-        if (data.success) {
-          const nodeKey = getNodeKey(node)
-          latencies.value[nodeKey] = {
-            latency: latency,
-            status: getStatusByLatency(latency)
-          }
-          console.log(`Updated latencies for ${node.name} (${nodeKey}):`, latencies.value[nodeKey])
-        } else {
-          throw new Error('Server returned error')
+      const latency = Date.now() - timestamp
+      console.log(`Latency response for ${node.name}:`, data)
+      if (data.success) {
+        const nodeKey = getNodeKey(node)
+        latencies.value[nodeKey] = {
+          latency: latency,
+          status: getStatusByLatency(latency)
         }
+        console.log(`Updated latencies for ${node.name} (${nodeKey}):`, latencies.value[nodeKey])
       } else {
-        throw new Error('Server not responding properly')
+        throw new Error('Server returned error')
       }
+      // === CUSTOM END: 延迟探测走统一 API 层 ===
     } catch (error) {
       console.error('Failed to test latency for', node.name, error)
       const nodeKey = getNodeKey(node)
@@ -242,38 +257,19 @@ export const useNodesStore = defineStore('nodes', () => {
     const targetNode = selectedNode.value
     const sessionId = selectedNodeSession.value
 
-    // 所有节点都使用独立的session ID
-    const baseURL = targetNode.url
-
-    let axiosConfig = {
+    // === CUSTOM START: 节点工具请求走统一 API 层 - By ASxiaowen ===
+    // 理由: 传输层换成 custom_components/apiClient（自动携带登录/临时链接令牌，
+    //       统一超时与错误分类）；原有的成功判定与 reject 语义保持不变。
+    const payload = await request(`/method/${method}`, {
+      params: data,
+      session: sessionId, // 所有节点都使用独立的session ID
       timeout: 1000 * 120,
-      headers: {
-        'session': sessionId,
-        'Content-Type': 'application/json'
-      }
-    }
-
-    if (signal != null) {
-      axiosConfig.signal = signal
-    }
-
-    const _axios = axios.create(axiosConfig)
-
-    return new Promise((resolve, reject) => {
-      _axios
-        .get(`${baseURL}/method/${method}`, { params: data })
-        .then((response) => {
-          if (response.data && response.data.success) {
-            resolve(response.data)
-            return
-          }
-          reject(response)
-        })
-        .catch((error) => {
-          console.error('Node request error:', error)
-          reject(error)
-        })
+      signal: signal || undefined,
+      node: { url: targetNode.url }
     })
+    if (payload && payload.success) return payload
+    return Promise.reject(payload)
+    // === CUSTOM END: 节点工具请求走统一 API 层 ===
   }
 
   // 获取选定节点的EventSource

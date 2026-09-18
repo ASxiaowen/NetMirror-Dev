@@ -6,6 +6,10 @@ import { useNodesStore } from '@/stores/nodes'
 import { useNodeTool } from '@/composables/useNodeTool'
 import { PlayIcon, StopIcon, ArrowDownIcon, ArrowUpIcon, ChartBarIcon } from '@heroicons/vue/24/outline'
 import VueApexCharts from 'vue3-apexcharts'
+// === CUSTOM START: 测速 URL 携带访问令牌 - By ASxiaowen ===
+// 理由: 见 startTest 中 sessionUrl 处的说明；令牌附加逻辑集中在 authState。
+import { appendToken } from '@/custom_components/authState'
+// === CUSTOM END: 测速 URL 携带访问令牌 ===
 
 const appStore = useAppStore()
 const containerRef = ref()
@@ -305,9 +309,15 @@ const startOrStopSpeedtest = (force = false) => {
   }
 
   // 构造 session URL - 使用绝对路径
-  const sessionUrl = baseUrl.value
+  // === CUSTOM START: 测速 URL 携带访问令牌 - By ASxiaowen ===
+  // 理由: speedtest worker 用 XHR 直连节点，无法复用 apiClient 的请求头注入；
+  //       下行是 GET、上行是带 Content-Encoding 的 POST，令牌只能走查询参数。
+  //       后端 ExtractToken 支持 ?token=，因此这里统一附加。
+  const rawSessionUrl = baseUrl.value
     ? `${baseUrl.value}/session/${currentSessionId.value}`
     : `${window.location.origin}/session/${currentSessionId.value}`
+  const sessionUrl = appendToken(rawSessionUrl, null)
+  // === CUSTOM END: 测速 URL 携带访问令牌 ===
 
   workerInstance.postMessage(
     'start ' + JSON.stringify({
