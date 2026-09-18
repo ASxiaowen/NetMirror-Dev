@@ -120,11 +120,16 @@ func tokenSummary(cl *Claims) gin.H {
 		"sub":  cl.Sub,
 	}
 	if cl.Kind == KindShare {
+		// nodes 是权威字段（多节点）；nodeId/nodeUrl/nodeName 保留给旧客户端与旧令牌，
+		// 这样前端升级前后都能正确渲染。
+		nodes := cl.NodesOrDefault()
+		h["nodes"] = nodes
+		h["nodeCount"] = len(nodes)
 		h["nodeId"] = cl.NodeID
 		h["nodeUrl"] = cl.NodeURL
-		// nodeName 与 redeem 的 scope 保持一致：刷新页面时外壳走的是 verify 这条路径，
-		// 少了它受限模式的节点名会退化成 id。
-		h["nodeName"] = cl.NodeID
+		// 刷新页面时外壳走的是 verify 这条路径（而不是 redeem），
+		// 少了 nodeName 受限模式的节点名会退化成 id。
+		h["nodeName"] = cl.NodesSummary()
 		h["tools"] = cl.Tools
 		h["jti"] = cl.Jti
 		if cl.Exp > 0 {

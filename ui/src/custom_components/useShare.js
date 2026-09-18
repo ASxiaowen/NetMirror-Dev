@@ -66,27 +66,72 @@ export function hasAnyAllowedTool() {
   return TOOL_CATALOG.some((t) => shareToolAllowed(t.id))
 }
 
-/** 从作用域里取出被锁定的节点（临时链接只允许访问这一个节点） */
-export function lockedNodeFromScope() {
+/**
+ * 从作用域里取出被授权的节点列表。
+ *
+ * 兼容两种载荷：
+ *   - 新（多节点）：scope.nodes = [{id,name,url,location}, ...]
+ *   - 旧（单节点）：scope.nodeUrl / nodeId / nodeName
+ * 合成同一个数组返回，调用方不需要区分。
+ */
+export function lockedNodesFromScope() {
   const s = authState.scope
-  if (!s || !s.nodeUrl) return null
-  return {
-    id: s.nodeId || '',
-    name: s.nodeName || s.nodeId || 'Shared node',
-    location: s.note || '',
-    url: String(s.nodeUrl).replace(/\/+$/, '')
+  if (!s) return []
+
+  let raw = []
+  if (Array.isArray(s.nodes) && s.nodes.length) {
+    raw = s.nodes
+  } else if (s.nodeUrl) {
+    raw = [{ id: s.nodeId, name: s.nodeName, url: s.nodeUrl }]
   }
+
+  return raw
+    .map((n) => ({
+      id: n.id || '',
+      name: n.name || n.id || 'Shared node',
+      location: n.location || '',
+      url: String(n.url || '').replace(/\/+$/, '')
+    }))
+    .filter((n) => !!n.url)
+}
+
+/**
+ * 兼容入口：只需要「一个目标」的调用点取列表首项。
+ * 多节点下它不再代表「唯一被授权的节点」，别用它做权限判断。
+ */
+export function lockedNodeFromScope() {
+  return lockedNodesFromScope()[0] || null
+}
+
+/** 受限模式下被授权的节点列表（非受限模式为空数组） */
+export function restrictedNodes() {
+  return isShareMode() ? lockedNodesFromScope() : []
 }
 
 /**
  * 当前应当承载 API 请求的节点。
  *
  * 非受限模式返回 null（= 用「当前页面所在源」的相对路径，保持原行为）；
- * 受限模式返回绑定的那个节点，让同源相对请求（./session 等）也一起走到绑定节点上，
- * 这样临时链接的全部流量都只落在一个节点，后端按 Host 做的归属校验才能一致通过。
+ * 受限模式返回首个被授权节点，兜住那些没显式传节点的调用点。
+ * 多节点场景下，调用方应当显式传自己想访问的那个节点。
  */
 export function restrictedNode() {
   return isShareMode() ? lockedNodeFromScope() : null
+}
+
+/**
+ * 某个节点是否在当前临时链接的授权范围内。
+ *
+ * 仅用于前端「不给入口」。真正的判定在后端守卫（按请求 Host 比对授权节点），
+ * 所以这里被绕过也只是多显示一个切换项，数据仍拿不到。
+ */
+export function shareNodeAllowed(node) {
+  if (!isShareMode()) return true
+  const list = lockedNodesFromScope()
+  if (!list.length) return true
+  const url = String(node?.url || '').replace(/\/+$/, '')
+  if (!url) return false
+  return list.some((n) => n.url === url)
 }
 
 /** 剩余秒数（响应式，随 scope.exp 计算） */

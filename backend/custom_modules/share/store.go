@@ -1,8 +1,13 @@
 // Package share 是 NetMirror 二次开发的临时链接模块。
 //
-// 用途：把「一个节点 + 一组工具 + 一个有效期」打包成一条链接 `/t/<id>`，
+// 用途：把「一组节点 + 一组工具 + 一个有效期」打包成一条链接 `/t/<id>`，
 // 再配一个**一次性展示**的临时密码。链接与密码分开发送，对方打开链接后
 // 输入密码才能进入受限模式 —— 链接被转发出去也没用。
+//
+// 绑定的节点可以是多台：访客在这些节点之间自由切换，工具白名单对
+// 所有节点**共用一套**（不按节点区分权限）。这是刻意的取舍 ——
+// 「节点×工具」的二维矩阵容易配错，而实际场景（让客户测这几台机器的这几项）
+// 一维就够了。
 //
 // 两件凭证的分工：
 //   - **链接 id 不是秘密**，它只用来定位记录（类似用户名）。所以它可以明文落库，
@@ -23,6 +28,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -34,11 +40,20 @@ import (
 type Record struct {
 	// ID 同时充当三处标识：URL 里的 /t/<ID>、令牌载荷的 jti（吊销用）、
 	// 以及密码派生时的绑定串。合成一个可以省掉「id 与 jti 两套值互相对照」的负担。
-	ID       string `json:"id"`
-	Note     string `json:"note"`
-	NodeID   string `json:"nodeId"`
-	NodeURL  string `json:"nodeUrl"`
-	NodeName string `json:"nodeName"`
+	ID   string `json:"id"`
+	Note string `json:"note"`
+
+	// Nodes 绑定的节点集合（多节点：访客可在这些节点间自由切换）。
+	// 工具白名单对所有节点共用一套，不按节点区分权限。
+	Nodes []auth.NodeRef `json:"nodes,omitempty"`
+
+	// 以下是早期「单节点绑定」的字段。保留只为**向后读取**：
+	// 升级前落库的记录只有它们，EffectiveNodes 会合成一条返回，
+	// 因此本次升级不需要迁移 JSON、旧链接继续可用。
+	NodeID   string `json:"nodeId,omitempty"`
+	NodeURL  string `json:"nodeUrl,omitempty"`
+	NodeName string `json:"nodeName,omitempty"`
+
 	// PassHash 临时密码的派生值（HMAC(secret, id::明文)）。永不出现在响应里。
 	PassHash  string   `json:"passHash"`
 	Tools     []string `json:"tools"`
@@ -50,6 +65,34 @@ type Record struct {
 	RevokedAt int64    `json:"revokedAt,omitempty"`
 	UseCount  int      `json:"useCount"`
 	LastUseAt int64    `json:"lastUseAt,omitempty"`
+}
+
+// EffectiveNodes 返回该记录绑定的节点列表。
+//
+// 新记录读 Nodes；早期记录只有单值字段，这里合成一条 —— 于是调用方
+// （签发令牌、渲染列表、展示详情）都不需要关心记录是新是旧。
+func (r *Record) EffectiveNodes() []auth.NodeRef {
+	if len(r.Nodes) > 0 {
+		return r.Nodes
+	}
+	if r.NodeURL == "" && r.NodeID == "" && r.NodeName == "" {
+		return nil
+	}
+	name := firstNonEmpty(r.NodeName, r.NodeID, r.NodeURL)
+	return []auth.NodeRef{{ID: r.NodeID, Name: name, URL: r.NodeURL}}
+}
+
+// NodeSummary 把绑定的节点概括成一句话（列表与详情页展示用）。
+func (r *Record) NodeSummary() string {
+	nodes := r.EffectiveNodes()
+	switch len(nodes) {
+	case 0:
+		return ""
+	case 1:
+		return nodes[0].Label()
+	default:
+		return nodes[0].Label() + " 等 " + strconv.Itoa(len(nodes)) + " 个节点"
+	}
 }
 
 // Expired 是否已过期
@@ -115,6 +158,7 @@ type store struct {
 	path    string
 	records []*Record
 	loaded  bool
+	modTime time.Time // 上次成功加载时文件的修改时间，用于跨进程感知变更
 }
 
 var db = &store{}
@@ -135,22 +179,36 @@ func (s *store) filePath() string {
 	return s.path
 }
 
+// load 保证 s.records 是磁盘上最新的一份。
+//
+// 为什么不能「只加载一次」：panel 与 agent（或多个节点）常常是**共用同一份 JSON 文件
+// 的不同进程**。若各自在启动时读一次就永久缓存，那么 A 进程吊销后、B 进程的内存里
+// 仍是旧快照，临时链接在 B 上继续可用 —— 吊销形同虚设。
+//
+// 这里按文件修改时间做增量重载：stat 很便宜，只有 mtime 变新时才真正读盘解析。
+// 既保证跨进程吊销在下一次请求就生效，又不会让每个请求都付一遍 JSON 解析的代价。
 func (s *store) load() {
-	if s.loaded {
-		return
-	}
-	s.loaded = true
-
 	p := s.filePath()
+	st, err := os.Stat(p)
+	if err != nil {
+		return // 首次运行文件不存在，属正常；保持现有内存状态
+	}
+
+	if s.loaded && !st.ModTime().After(s.modTime) {
+		return // 文件没动过，继续用内存快照
+	}
+
 	raw, err := os.ReadFile(p)
 	if err != nil {
-		return // 首次运行文件不存在，属正常
+		return
 	}
 	var list []*Record
 	if err := json.Unmarshal(raw, &list); err != nil {
-		return // 文件损坏时不阻塞服务，按空库处理
+		return // 文件损坏时不阻塞服务，保留上一次的可用快照
 	}
 	s.records = list
+	s.loaded = true
+	s.modTime = st.ModTime()
 }
 
 func (s *store) persist() error {
@@ -166,7 +224,15 @@ func (s *store) persist() error {
 	if err := os.WriteFile(tmp, raw, 0644); err != nil {
 		return err
 	}
-	return os.Rename(tmp, s.filePath())
+	if err := os.Rename(tmp, s.filePath()); err != nil {
+		return err
+	}
+	// 记下自己刚写出的时间：否则下一次 load 会看到 mtime 变新，
+	// 把刚刚亲手写进去的内容再读一遍（读出来的完全一样，纯属浪费）。
+	if st, err := os.Stat(s.filePath()); err == nil {
+		s.modTime = st.ModTime()
+	}
+	return nil
 }
 
 // List 返回全部记录（新→旧）
@@ -307,9 +373,11 @@ func clearAttempts(id string) {
 // 之所以注入而不是让 auth 直接读库：auth 是通用鉴权层，不该认识临时链接的业务语义；
 // 同时这样能避免 auth → share 的反向 import 形成循环依赖。
 //
-// 「known=false」表示本机没有这条记录 —— 常见于请求打到的是远端节点，
-// 它只持有签名密钥、不持有签发方的记录表。此时按令牌自带的 exp 生效，
-// 吊销立即生效的范围限于共享同一 DATA_DIR 的进程。
+// 「known=false」表示本机看不到这条记录 —— 即请求打到的是**不共享 DATA_DIR 的远端节点**：
+// 它只持有签名密钥、没有签发方的记录表。此时按令牌自带的 exp 生效，吊销无法立刻传播。
+//
+// 共享同一份 DATA_DIR 的进程（如同一台机上的 panel 与 agent）则能立即感知吊销 ——
+// load() 按文件 mtime 增量重载，任一侧写盘后另一侧在下一个请求就能读到。
 func Init() {
 	auth.RevocationChecker = func(jti string) (revoked bool, known bool) {
 		if jti == "" {

@@ -54,6 +54,16 @@ const toolLabels = computed(() => {
 const shownTools = computed(() => toolLabels.value.slice(0, 6))
 const moreTools = computed(() => Math.max(0, toolLabels.value.length - 6))
 
+/**
+ * 被授权的节点名列表。
+ * 单节点时与 nodeName 等价；多节点时逐台列出 —— 对方可以在输密码前
+ * 就确认「这条链接覆盖的正是我要测的那几台」。
+ */
+const nodeNames = computed(() => {
+  const list = props.info?.nodes || []
+  return list.map((n) => n.name || n.id || n.url).filter(Boolean)
+})
+
 const submit = async () => {
   if (loading.value) return
   error.value = ''
@@ -129,7 +139,11 @@ onMounted(() => {
           <div class="flex items-baseline gap-2 text-[12px]">
             <span class="w-16 flex-shrink-0 text-gray-400 dark:text-gray-500">测试节点</span>
             <span class="min-w-0 font-medium text-gray-800 dark:text-gray-200">
-              {{ info.nodeName || '—' }}
+              <template v-if="nodeNames.length">{{ nodeNames.join('、') }}</template>
+              <template v-else>{{ info.nodeName || '—' }}</template>
+              <span v-if="nodeNames.length > 1" class="ml-1 font-normal text-gray-400 dark:text-gray-500">
+                （共 {{ nodeNames.length }} 台，进入后可切换）
+              </span>
             </span>
           </div>
           <div v-if="info.note" class="flex items-baseline gap-2 text-[12px]">

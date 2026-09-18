@@ -33,16 +33,19 @@ const tab = ref('create') // create | list
 
 // ---- 创建表单 ----
 /**
- * 内部记录「用户显式选过的节点」。
+ * 用户显式勾选的节点 url 集合（多选）。
  *
- * 为什么不直接把 v-model 绑在这个 ref 上、只靠 watch 去补默认值：
- * 原生 <select> 在「模型值匹配不上任何 option」时，**浏览器会照常显示第一个
- * option**，但模型仍是空串。于是出现自相矛盾的界面 —— 下拉里明明显示着
- * LAX1-245，点「生成」却报「请先选择要分享的节点」（节点列表比弹窗晚加载时
- * 极易触发）。这里改成可写 computed：只要 option 已就绪就一定能算出非空值，
- * 模型与显示不会再脱节。
+ * 为什么是数组 + 复选框，而不是原先那个单选 <select>：
+ * 除了「一条链接可以测多台机器」这个需求本身，原生 <select> 还有个坑 ——
+ * 模型值匹配不上任何 option 时，**浏览器仍会照常显示第一个 option**，
+ * 于是出现自相矛盾的界面：下拉里明明显示着节点，点生成却报「请先选择节点」
+ * （节点列表比弹窗晚加载时极易触发）。复选框不会：没勾就是没勾，一眼可见。
+ *
+ * 存 url 而不是下标/对象：节点列表刷新后对象会换新实例，url 是稳定主键。
  */
-const nodeUrlInput = ref('')
+const selectedNodeUrls = ref([])
+/** 是否已经补过默认勾选 —— 用户手动清空后不再自动补回来 */
+const nodeDefaultApplied = ref(false)
 const note = ref('')
 const ttl = ref(24 * 3600)
 const selectedTools = ref([...DEFAULT_TOOLS])
@@ -53,6 +56,15 @@ const createError = ref('')
 const created = ref(null)
 /** 哪一项刚被复制：'' | 'url' | 'password' */
 const copied = ref('')
+
+/** 刚生成的链接覆盖了几个节点（用于结果区文案） */
+const createdNodeCount = computed(() => created.value?.record?.nodeCount || 0)
+
+/** 刚生成的链接覆盖的节点名，逗号分隔；多台时便于发出去前复核 */
+const createdNodeNames = computed(() => {
+  const list = created.value?.record?.nodes || []
+  return list.map((n) => n.name || n.id || n.url).filter(Boolean).join('、')
+})
 
 // ---- 列表 ----
 const shares = ref([])
@@ -76,23 +88,48 @@ const nodeOptions = computed(() =>
 )
 
 /**
- * 对外暴露的「实际会使用的节点」：显式选择优先，否则回落到第一个可选项。
- * 这样即使 watch 还没跑到，只要 option 已渲染，取值就一定与界面显示一致。
+ * 归一化后的选中节点 url：按节点列表顺序排列，并自动丢弃已失效的 url
+ * （节点从列表里被删掉、或地址改了）。提交与计数都以它为准，
+ * 和界面显示的勾选状态严格一致。
  */
-const nodeUrl = computed({
-  get: () => nodeUrlInput.value || nodeOptions.value[0]?.url || '',
-  set: (v) => {
-    nodeUrlInput.value = v || ''
-  }
-})
+const checkedNodeUrls = computed(() =>
+  nodeOptions.value.filter((n) => selectedNodeUrls.value.includes(n.url)).map((n) => n.url)
+)
 
-/** 默认选中当前正在浏览的节点（最常见用法），并纠正已失效的选择 */
+const checkedCount = computed(() => checkedNodeUrls.value.length)
+
+const allNodesChecked = computed(
+  () => nodeOptions.value.length > 0 && checkedCount.value === nodeOptions.value.length
+)
+
+const toggleNode = (url) => {
+  const i = selectedNodeUrls.value.indexOf(url)
+  if (i >= 0) selectedNodeUrls.value.splice(i, 1)
+  else selectedNodeUrls.value.push(url)
+}
+
+const checkAllNodes = () => {
+  selectedNodeUrls.value = nodeOptions.value.map((n) => n.url)
+}
+
+const clearNodes = () => {
+  selectedNodeUrls.value = []
+}
+
+/**
+ * 节点列表就绪后补一次默认勾选：只勾「当前正在浏览的那个节点」。
+ *
+ * 刻意不默认全选 —— 只想分享一台时，全选意味着得先手动取消掉其余几台，
+ * 一旦漏看就会把本来不该给的机器一起发出去。少给比多给安全。
+ */
 watch(nodeOptions, (list) => {
   if (!list.length) return
-  if (list.some((n) => n.url === nodeUrlInput.value)) return
+  if (nodeDefaultApplied.value) return
+  nodeDefaultApplied.value = true
   const cur = nodesStore.currentNode
   const curUrl = cur ? String(cur.url || '').replace(/\/+$/, '') : ''
-  nodeUrlInput.value = list.find((n) => n.url === curUrl)?.url || list[0].url
+  const pick = list.find((n) => n.url === curUrl) || list[0]
+  selectedNodeUrls.value = [pick.url]
 }, { immediate: true })
 
 
@@ -108,13 +145,13 @@ const submit = async () => {
   copied.value = ''
 
   // 先区分「还没加载完」与「没选」—— 否则节点列表晚到时，用户会看到
-  // 「请先选择节点」，而下拉里其实已经显示着节点，纯属误导。
+  // 「请先选择节点」，而界面上其实已经勾着节点，纯属误导。
   if (nodeOptions.value.length === 0) {
     createError.value = '节点列表尚未加载完成，请稍候重试'
     return
   }
-  if (!nodeUrl.value) {
-    createError.value = '请先选择要分享的节点'
+  if (checkedCount.value === 0) {
+    createError.value = '请至少勾选一个要分享的节点'
     return
   }
   if (selectedTools.value.length === 0) {
@@ -122,13 +159,14 @@ const submit = async () => {
     return
   }
 
-  const opt = nodeOptions.value.find((n) => n.url === nodeUrl.value)
+  // 按勾选顺序提交完整节点信息（id/name/location 一并带上）：
+  // 受限模式下的节点来自令牌 scope，不查 /nodes —— 少了这些字段，
+  // 访客侧就只能看到一串裸地址。
+  const picked = nodeOptions.value.filter((n) => checkedNodeUrls.value.includes(n.url))
   creating.value = true
   try {
     const d = await createShare({
-      nodeUrl: nodeUrl.value,
-      nodeId: opt?.name || '',
-      nodeName: opt?.name || '',
+      nodes: picked.map((n) => ({ id: n.name, name: n.name, url: n.url, location: n.location })),
       note: note.value.trim(),
       tools: [...selectedTools.value],
       ttlSeconds: ttl.value
@@ -236,35 +274,93 @@ onMounted(() => {
 
     <!-- ============ 生成 ============ -->
     <div v-if="tab === 'create'" class="space-y-4">
-      <div class="grid gap-3 sm:grid-cols-2">
-        <div>
-          <label class="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-500">
+      <!-- 绑定节点：多选。一条链接可覆盖多台机器，访客在它们之间自由切换，
+           工具白名单对所有节点共用一套（不按节点区分权限）。 -->
+      <div>
+        <div class="mb-1.5 flex items-baseline justify-between gap-2">
+          <label class="text-[11px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-500">
             绑定节点
           </label>
-          <select
-            v-model="nodeUrl"
-            class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-[13px] text-gray-800 outline-none transition-colors focus:border-primary-400 focus:ring-2 focus:ring-primary-100 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-100 dark:focus:border-primary-500/50 dark:focus:ring-primary-500/10"
-          >
-            <option v-for="n in nodeOptions" :key="n.url" :value="n.url">
-              {{ n.name }}<template v-if="n.location"> · {{ n.location }}</template>
-            </option>
-          </select>
-          <p v-if="nodeOptions.length === 0" class="mt-1 text-[11px] text-amber-600 dark:text-amber-400">
-            暂无可用节点，请确认节点列表已加载。
-          </p>
+          <div v-if="nodeOptions.length" class="flex items-center gap-2 text-[11px]">
+            <span class="tabular-nums text-gray-400 dark:text-gray-500">
+              已选 {{ checkedCount }} / {{ nodeOptions.length }}
+            </span>
+            <button
+              type="button"
+              :disabled="allNodesChecked"
+              class="font-medium text-primary-600 transition-colors hover:underline disabled:cursor-default disabled:text-gray-300 disabled:no-underline dark:text-primary-400 dark:disabled:text-gray-600"
+              @click="checkAllNodes"
+            >
+              全选
+            </button>
+            <button
+              type="button"
+              :disabled="checkedCount === 0"
+              class="font-medium text-gray-500 transition-colors hover:underline disabled:cursor-default disabled:text-gray-300 disabled:no-underline dark:text-gray-400 dark:disabled:text-gray-600"
+              @click="clearNodes"
+            >
+              清空
+            </button>
+          </div>
         </div>
 
-        <div>
-          <label class="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-500">
-            备注（发给谁）
-          </label>
-          <input
-            v-model="note"
-            maxlength="40"
-            placeholder="例如：张三 / 客户A 排障"
-            class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-[13px] text-gray-800 outline-none transition-colors placeholder:text-gray-400 focus:border-primary-400 focus:ring-2 focus:ring-primary-100 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-100 dark:placeholder:text-gray-600 dark:focus:border-primary-500/50 dark:focus:ring-primary-500/10"
-          />
+        <div
+          v-if="nodeOptions.length === 0"
+          class="rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2 text-[12px] text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300"
+        >
+          暂无可用节点，请确认节点列表已加载。
         </div>
+        <!-- 节点多时限高滚动，避免把「有效期 / 功能」挤出视野 -->
+        <div
+          v-else
+          class="max-h-44 space-y-0.5 overflow-y-auto rounded-lg border border-gray-200/80 p-1.5 dark:border-white/[0.08]"
+        >
+          <button
+            v-for="n in nodeOptions"
+            :key="n.url"
+            type="button"
+            data-nm-node
+            class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] transition-colors"
+            :class="
+              checkedNodeUrls.includes(n.url)
+                ? 'bg-primary-50 text-primary-700 dark:bg-primary-500/15 dark:text-primary-300'
+                : 'text-gray-600 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-white/[0.05]'
+            "
+            @click="toggleNode(n.url)"
+          >
+            <span
+              class="flex h-3.5 w-3.5 flex-shrink-0 items-center justify-center rounded-[4px] border transition-colors"
+              :class="
+                checkedNodeUrls.includes(n.url)
+                  ? 'border-primary-500 bg-primary-500 text-white'
+                  : 'border-gray-300 dark:border-white/20'
+              "
+            >
+              <svg v-if="checkedNodeUrls.includes(n.url)" class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"></path>
+              </svg>
+            </span>
+            <span class="min-w-0 flex-1 truncate">
+              <span class="font-medium">{{ n.name }}</span>
+              <span v-if="n.location" class="text-gray-400 dark:text-gray-500"> · {{ n.location }}</span>
+            </span>
+          </button>
+        </div>
+        <p class="mt-1 text-[11px] text-gray-400 dark:text-gray-500">
+          勾选的机器访客都能连；未勾选的连不上（后端按请求 Host 校验归属）。
+        </p>
+      </div>
+
+      <div>
+        <label class="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-500">
+          备注（发给谁）
+        </label>
+        <input
+          v-model="note"
+          maxlength="40"
+          placeholder="例如：张三 / 客户A 排障"
+          class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-[13px] text-gray-800 outline-none transition-colors placeholder:text-gray-400 focus:border-primary-400 focus:ring-2 focus:ring-primary-100 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-100 dark:placeholder:text-gray-600 dark:focus:border-primary-500/50 dark:focus:ring-primary-500/10"
+        />
       </div>
 
       <div>
@@ -364,7 +460,13 @@ onMounted(() => {
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
           </svg>
           已生成，有效期 {{ formatDuration(ttl) }}
+          <span v-if="createdNodeCount > 1" class="font-normal">· 覆盖 {{ createdNodeCount }} 个节点</span>
         </div>
+
+        <!-- 绑定了多台时把机器列出来：管理员发出去之前要能一眼核对自己是不是多勾了 -->
+        <p v-if="createdNodeNames" class="text-[11px] leading-relaxed text-emerald-700/90 dark:text-emerald-400/90">
+          可访问：{{ createdNodeNames }}
+        </p>
 
         <!-- 链接：不是秘密，可重发 -->
         <div>
@@ -447,7 +549,13 @@ onMounted(() => {
           {{ statusMeta(s.status).text }}
         </span>
         <span class="min-w-0 flex-1">
-          <span class="font-medium text-gray-800 dark:text-gray-200">{{ s.nodeName || s.nodeId || s.nodeUrl }}</span>
+          <!-- nodeName 是后端给的概括（单节点=名字；多节点=「A 等 3 个节点」），
+               完整清单放在 title 里，鼠标悬停可核对具体是哪几台。 -->
+          <span
+            class="font-medium text-gray-800 dark:text-gray-200"
+            :title="(s.nodes || []).map(n => n.name || n.id || n.url).join('\n')"
+          >{{ s.nodeName || s.nodeId || s.nodeUrl }}</span>
+          <span v-if="s.nodeCount > 1" class="text-gray-400 dark:text-gray-500"> · {{ s.nodeCount }} 台</span>
           <span v-if="s.note" class="text-gray-500 dark:text-gray-400"> · {{ s.note }}</span>
         </span>
         <span class="font-mono text-[11px] tabular-nums text-gray-400 dark:text-gray-500" :title="`创建 ${fmtTime(s.createdAt)} / 过期 ${fmtTime(s.expiresAt)}`">

@@ -30,7 +30,24 @@ const toolText = computed(() => {
   return tools.value.map(toolLabel).join('、')
 })
 
-const nodeText = computed(() => scope.value.nodeId || scope.value.nodeUrl || '—')
+/**
+ * 展示用节点名。
+ *
+ * 这里刻意从 nodes 数组推导，而不是读 nodeId：多节点令牌只有 nodes 数组，
+ * nodeId/nodeUrl 是留给旧令牌的兼容字段（多节点时为空），只读它们会让
+ * 横幅显示成「节点 —」。
+ */
+const nodeText = computed(() => {
+  const list = scope.value.nodes || []
+  if (list.length > 1) {
+    return (list[0].name || list[0].url || '—') + ' 等 ' + list.length + ' 个节点'
+  }
+  if (list.length === 1) {
+    return list[0].name || list[0].url || '—'
+  }
+  // 旧令牌没有 nodes 数组，退回兼容字段
+  return scope.value.nodeName || scope.value.nodeId || scope.value.nodeUrl || '—'
+})
 const countdown = computed(() => formatDuration(left.value))
 /** 剩余不足 10 分钟时改成警示配色 */
 const urgent = computed(() => left.value > 0 && left.value <= 600)

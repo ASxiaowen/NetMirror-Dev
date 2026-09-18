@@ -8,7 +8,7 @@ import { useAppStore } from '@/stores/app'
 //       restrictedNode() 在临时链接受限模式下返回被绑定的节点，
 //       使节点列表、延迟探测、工具请求全部只落在那一个节点上。
 import { request } from '@/custom_components/apiClient'
-import { restrictedNode } from '@/custom_components/useShare'
+import { restrictedNodes } from '@/custom_components/useShare'
 // === CUSTOM END: 统一 API 层与受限模式 ===
 
 // === CUSTOM START: 节点 Session 状态机 - By ASxiaowen ===
@@ -102,12 +102,17 @@ export const useNodesStore = defineStore('nodes', () => {
   const fetchNodes = async () => {
     // === CUSTOM START: 临时链接受限模式 - By ASxiaowen ===
     // 理由: 受限模式下不查询 /nodes —— 该接口可能为空（agent 模式）或不含被绑定的节点，
-    //       直接用作用域里的节点构造单节点列表，访客也无法切换到别的节点。
-    const locked = restrictedNode()
-    if (locked) {
-      nodes.value = [locked]
-      currentNode.value = locked
-      await selectNode(locked)
+    //       直接用作用域里的节点构造节点列表。访客只在这几台之间切换，
+    //       权限边界由后端按请求 Host 把关，前端这里只负责「不给别的入口」。
+    const lockedList = restrictedNodes()
+    if (lockedList.length) {
+      nodes.value = lockedList
+      currentNode.value = lockedList[0]
+      await selectNode(lockedList[0])
+      // 逐台探测延迟：多节点下这张列表就是访客唯一的节点视图，
+      // 不探测的话每台都会一直显示 “Testing...”，看起来像坏了。
+      // （/nodes/latency 未纳入工具白名单，因为它只回本机往返时延，无可执行能力。）
+      await testAllLatencies()
       return
     }
     // === CUSTOM END: 临时链接受限模式 ===
@@ -146,12 +151,14 @@ export const useNodesStore = defineStore('nodes', () => {
       const timestamp = Date.now()
       // === CUSTOM START: 延迟探测走统一 API 层 - By ASxiaowen ===
       // 理由: 传输层换成 apiClient（自动令牌/分类错误）。目标选择保持原语义：
-      //       受限模式一律用绑定节点；否则同源走相对路径，远程节点走绝对地址。
+      //       同源走相对路径、远程节点走绝对地址。
+      //       受限模式下无需特判 —— 节点列表本身就是从作用域构造的，
+      //       传进来的 node 一定在授权范围内，逐台探测才能各自出延迟。
       const data = await request('/nodes/latency', {
         params: { timestamp },
         timeout: 5000,
         signal: AbortSignal.timeout(5000),
-        node: restrictedNode() || (isCurrentNode(node) ? null : node)
+        node: isCurrentNode(node) ? null : node
       })
       const latency = Date.now() - timestamp
       console.log(`Latency response for ${node.name}:`, data)
