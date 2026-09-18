@@ -18,10 +18,22 @@ import (
 	"github.com/X-Zero-L/als/als/controller/speedtest"
 	"github.com/X-Zero-L/als/als/controller/tokens"
 	"github.com/X-Zero-L/als/config"
+	// === CUSTOM START: 二次开发后端模块导入 - By ASxiaowen ===
+	// 理由: 见 backend/custom_modules/README.md
+	customcors "github.com/X-Zero-L/als/custom_modules/cors"
+	// === CUSTOM END: 二次开发后端模块导入 ===
 	iEmbed "github.com/X-Zero-L/als/embed"
 )
 
 func SetupHttpRoute(e *gin.Engine) {
+	// === CUSTOM START: 注册二次开发 CORS 预检扩展 - By ASxiaowen ===
+	// 理由: 上游 CORS 预检白名单缺 Content-Encoding，跨域部署（面板与节点不同源）时
+	//       librespeed 上行 POST 被浏览器预检拦截，界面恒显示 0.00。
+	//       必须注册在上游 CORS 中间件之前，才能抢在它 Set/Abort 之前接管 OPTIONS。
+	//       实现见 backend/custom_modules/cors。
+	e.Use(customcors.PreflightHandler())
+	// === CUSTOM END: 注册二次开发 CORS 预检扩展 ===
+
 	// Add CORS middleware to allow cross-origin requests
 	e.Use(func(c *gin.Context) {
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
