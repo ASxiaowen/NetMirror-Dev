@@ -2,9 +2,11 @@ package auth
 
 import (
 	"crypto/subtle"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 )
@@ -20,12 +22,17 @@ type loginRequest struct {
 }
 
 // RegisterRoutes 挂载登录相关路由。
-// 注意：这些路由本身永远放行（靠 Guard 里的 isAlwaysOpen），否则登录页无法调用。
+//
+// 前四条永远放行（靠 Guard 里的 isAlwaysOpen），否则登录页无法调用；
+// credentials 两条则要求登录用户（靠 isUserOnly），临时链接令牌一律拒绝。
 func RegisterRoutes(g *gin.RouterGroup) {
 	g.GET("/auth/config", handlePublicConfig)
 	g.POST("/auth/login", handleLogin)
 	g.GET("/auth/verify", handleVerify)
 	g.POST("/auth/logout", handleLogout)
+
+	g.GET("/auth/credentials", handleGetCredentials)
+	g.POST("/auth/credentials", handleUpdateCredentials)
 }
 
 // handlePublicConfig 给登录页用的公开信息：是否启用、令牌有效期。
@@ -60,10 +67,15 @@ func handleLogin(c *gin.Context) {
 
 	user := strings.TrimSpace(req.Username)
 
+	// 取「当前生效」凭据：环境变量给初值，管理页可运行时覆盖（见 credentials.go）。
+	// 每次登录都取一次而不是用包级 Cfg，这样任意一个进程改完密码，
+	// 另一个进程（panel 与 agent 是独立进程）的下一次登录就能用上新值。
+	curUser, curPass, _ := CredentialsInfo()
+
 	// 账号与密码都用定长比较，避免时序侧信道；两个比较都执行完再判断，
 	// 不因账号错就短路返回，否则响应耗时会泄漏「账号是否存在」。
-	userOK := subtle.ConstantTimeCompare([]byte(user), []byte(Cfg.Username)) == 1
-	passOK := subtle.ConstantTimeCompare([]byte(req.Password), []byte(Cfg.Password)) == 1
+	userOK := subtle.ConstantTimeCompare([]byte(user), []byte(curUser)) == 1
+	passOK := subtle.ConstantTimeCompare([]byte(req.Password), []byte(curPass)) == 1
 	if !userOK || !passOK {
 		// 刻意不区分「账号不存在」与「密码错误」—— 避免被用来枚举账号
 		c.JSON(http.StatusUnauthorized, gin.H{
@@ -76,7 +88,7 @@ func handleLogin(c *gin.Context) {
 
 	claims := &Claims{
 		Kind: KindUser,
-		Sub:  Cfg.Username,
+		Sub:  curUser,
 		Jti:  NewJti("u_"),
 	}
 	token, err := Sign(claims)
@@ -93,7 +105,7 @@ func handleLogin(c *gin.Context) {
 		"success":   true,
 		"token":     token,
 		"kind":      KindUser,
-		"username":  Cfg.Username,
+		"username":  curUser,
 		"expiresAt": claims.Exp,
 		"clientIP":  c.ClientIP(),
 	})
@@ -180,4 +192,143 @@ func handleVerify(c *gin.Context) {
 // 登出由前端丢弃本地令牌完成；这里保持接口存在以便未来切换成可吊销模式。
 func handleLogout(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// handleGetCredentials 返回当前生效的账号与密码，供管理页展示与修改。
+//
+// 为什么把密码回显给前端：能走到这里的请求已经过了登录门（而本接口又被
+// isUserOnly 限制为「仅登录用户」），且服务器上的 EnvironmentFile 本身就是
+// 明文、管理员随时能 cat。不回显反而让他无法确认「当前密码到底是什么」，
+// 改密时容易写错。代价是密码会经网络传输，因此：
+//   - 加 Cache-Control: no-store，禁止浏览器与中间层缓存；
+//   - 部署侧要求走可信网络或 HTTPS（见交付文档「已知限制」）。
+func handleGetCredentials(c *gin.Context) {
+	if !Cfg.Enabled {
+		c.JSON(http.StatusOK, gin.H{"success": true, "enabled": false})
+		return
+	}
+
+	user, pass, source := CredentialsInfo()
+
+	c.Header("Cache-Control", "no-store")
+	c.JSON(http.StatusOK, gin.H{
+		"success":     true,
+		"enabled":     true,
+		"username":    user,
+		"password":    pass,
+		"source":      source, // env | runtime
+		"minPassword": MinPasswordLen,
+		"filePath":    CredPath(),
+	})
+}
+
+type credUpdateRequest struct {
+	// CurrentPassword 当前密码，改任何一项都必须提供
+	CurrentPassword string `json:"currentPassword"`
+	// Username 留空表示不改账号
+	Username string `json:"username"`
+	// Password 留空表示不改密码
+	Password string `json:"password"`
+}
+
+// handleUpdateCredentials 修改账号 / 密码，改完立即生效，无需重启服务。
+//
+// 要求提供「当前密码」而不是只看令牌：万一令牌被人拿到（或管理员忘了锁屏），
+// 也改不了密码。这一层是改密操作的最后一道闸。
+func handleUpdateCredentials(c *gin.Context) {
+	if !Cfg.Enabled {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"code":    "AUTH_DISABLED",
+			"error":   "登录门未启用，无需修改凭据",
+		})
+		return
+	}
+
+	var req credUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"code":    "BAD_REQUEST",
+			"error":   "请求格式错误",
+		})
+		return
+	}
+
+	curUser, curPass, _ := CredentialsInfo()
+
+	if subtle.ConstantTimeCompare([]byte(req.CurrentPassword), []byte(curPass)) != 1 {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"success": false,
+			"code":    CodeAuthRequired,
+			"error":   "当前密码不正确",
+		})
+		return
+	}
+
+	newUser := strings.TrimSpace(req.Username)
+	newPass := req.Password
+
+	if newUser == "" && newPass == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"code":    "NO_CHANGE",
+			"error":   "没有要修改的内容",
+		})
+		return
+	}
+
+	// 用 RuneCount 而不是 len：中文密码按「字数」而不是「字节数」判断长度
+	if newPass != "" && utf8.RuneCountInString(newPass) < MinPasswordLen {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"code":    "WEAK_PASSWORD",
+			"error":   fmt.Sprintf("新密码至少 %d 位", MinPasswordLen),
+		})
+		return
+	}
+
+	target := curUser
+	if newUser != "" {
+		target = newUser
+	}
+	pass := curPass
+	if newPass != "" {
+		pass = newPass
+	}
+
+	changed := make([]string, 0, 2)
+	if target != curUser {
+		changed = append(changed, "username")
+	}
+	if pass != curPass {
+		changed = append(changed, "password")
+	}
+	if len(changed) == 0 {
+		c.Header("Cache-Control", "no-store")
+		c.JSON(http.StatusOK, gin.H{
+			"success":  true,
+			"username": target,
+			"changed":  []string{},
+			"message":  "内容与当前一致，未做修改",
+		})
+		return
+	}
+
+	if err := SetCredentials(target, pass, c.ClientIP()); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"code":    "SAVE_FAILED",
+			"error":   "保存失败：" + err.Error(),
+		})
+		return
+	}
+
+	c.Header("Cache-Control", "no-store")
+	c.JSON(http.StatusOK, gin.H{
+		"success":  true,
+		"username": target,
+		"changed":  changed,
+		"message":  "已生效。已签发的登录令牌在到期前仍然有效。",
+	})
 }

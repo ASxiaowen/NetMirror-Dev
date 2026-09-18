@@ -212,6 +212,13 @@
             </div>
           </div>
 
+          <!-- === CUSTOM START: 管理页扩展（登录凭据 + 临时链接） - By ASxiaowen === -->
+          <!-- 理由: 把「改面板账号密码」与「生成临时测试链接」并入本管理页，
+                     省掉在两个入口之间来回切换。实现全部在 custom_components/AdminExtras.vue，
+                     这里只做一行挂载（规范第 2 条）。 -->
+          <AdminExtras />
+          <!-- === CUSTOM END: 管理页扩展（登录凭据 + 临时链接） === -->
+
           <!-- Deploy Tokens Section -->
           <transition
             enter-active-class="transition-all duration-300 ease-out"
@@ -585,6 +592,11 @@ import { useNodeAdminStore } from '@/stores/nodeAdmin'
 import { useTokenAdminStore } from '@/stores/tokenAdmin'
 import { useNodesStore } from '@/stores/nodes'
 import { useAppStore } from '@/stores/app'
+// === CUSTOM START: 管理页扩展挂载 - By ASxiaowen ===
+// 理由: 「登录凭据」与「临时链接」两块控制的实现集中在 custom_components/AdminExtras.vue，
+//       此处仅做一行挂载（规范第 2 条入口隔离）。
+import AdminExtras from '@/custom_components/AdminExtras.vue'
+// === CUSTOM END: 管理页扩展挂载 ===
 import { storeToRefs } from 'pinia'
 
 const emit = defineEmits(['back'])

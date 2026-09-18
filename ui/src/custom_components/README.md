@@ -28,7 +28,10 @@
 | `LoginView.vue` | 登录页（账号 + 密码，沿用 `.lg-card` 视觉，深浅主题跟随） | RootShell.vue |
 | `SharePasswordView.vue` | **临时密码页**：先展示「这条链接给了什么」（节点/备注/可用功能/剩余有效），再要求输密码 | RootShell.vue |
 | `ShareBanner.vue` | 受限模式顶部提示条（含剩余有效期倒计时，归零时上报过期） | RootShell.vue |
-| `ShareAdminDialog.vue` | 临时链接管理弹窗（选节点、勾工具、设有效期；生成后**链接与密码分两行**各带复制按钮，并提示分开发送） | RootShell.vue |
+| `SharePanel.vue` | **可嵌入的临时链接面板**（生成表单 + 已生成列表）。弹窗与管理页两处共用同一实现，避免逻辑漂移 | ShareAdminDialog.vue, AdminExtras.vue |
+| `ShareAdminDialog.vue` | 临时链接管理**弹窗壳**（遮罩 + 关闭 + `<SharePanel>`），主面板右下角入口用 | RootShell.vue |
+| `AdminExtras.vue` | **管理页扩展**：①登录凭据（改账号/密码）②临时链接（内嵌 SharePanel）。挂在 Admin.vue 的已认证区域 | components/Admin.vue |
+| `useCredentials.js` | 凭据编排：读取当前账号/来源标记、保存新账号密码（带当前密码确认） | AdminExtras.vue |
 | `RootShell.vue` | **多态应用外壳**：loading / 登录页 / 临时密码页 / 失效卡片 / 原 `App.vue`（含受限模式） | main.js（挂载它而非 App.vue） |
 
 ### 二、既有定制（第一轮重构）
@@ -59,6 +62,7 @@
 | 10 | `src/components/Speedtest/Librespeed.vue` | 结果卡视觉 + 坐标轴格式；测速 URL 附加令牌查询参数 |
 | 11 | `src/components/TrafficDisplay.vue` | 接口卡视觉 |
 | 12 | `src/components/Loading.vue` | 连接卡视觉 |
+| 13 | `src/components/Admin.vue` | 已认证区域插入一行 `<AdminExtras />` + 一行 import（**本轮唯一上游改动，+12 行 / 0 删除**） |
 
 `tailwind.config.js` **未修改**（规则 5），`shadow-card/soft/lift/glow` 改为在 theme.css 里以纯 CSS 定义。
 
@@ -86,6 +90,30 @@
 
 打开分享链接时**临时链接优先于既有登录态** —— 否则访客会以上一个管理员的身份看到整站，
 权限模型就失效了。
+
+## 管理页扩展（AdminExtras）
+
+Node Management 管理页（`components/Admin.vue`）里插了两块控制，**上游文件只多一行
+`<AdminExtras />` 与一行 import**：
+
+| 区块 | 内容 | 后端 |
+| --- | --- | --- |
+| ① 登录凭据 | 改面板账号 / 密码，改完**立即生效**、无需重启；密码默认打码，可点「显示」查看 | `GET/POST /custom/auth/credentials`（**仅登录用户**，share 令牌一律 403） |
+| ② 临时测试链接 | 直接内嵌 `SharePanel`，与主面板右下角弹窗**共用同一份实现** | 同 `/custom/share` |
+
+设计要点：
+
+- **一份实现、两处入口**：`SharePanel.vue` 是可嵌入体，`ShareAdminDialog.vue`（主面板弹窗）
+  与 `AdminExtras.vue`（管理页内嵌）都只是外壳。避免两处各写一遍后逐渐漂移。
+- **保持上游的双重认证**：管理页本身仍要 Admin API Key，登录门是它之外的第一道；
+  两者互不影响，也不互相替代。
+- **改密码需要当前密码确认**：避免拿到一个已登录的浏览器就能直接改掉凭据。
+- 凭据来源会在界面上标注（环境变量 / 文件），并给出「删掉该文件即恢复初始值」的提示。
+
+> 测试侧提醒：`SharePanel` 的**页签与提交按钮文本完全相同**（都是「生成链接与密码」）。
+> 用「按文本找第一个 button」的方式点提交会命中页签，表现是「点了没反应、生成结果不出现」。
+> 提交按钮的稳定特征是 class 里的 `bg-gradient-to-b`（页签是 `flex-1 rounded-md`）。
+> 这个坑在 CDP 自动化里踩过两次。
 
 ## 两个容易踩的时序点
 

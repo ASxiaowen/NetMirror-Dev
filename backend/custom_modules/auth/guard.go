@@ -159,18 +159,32 @@ func authorize(c *gin.Context) (*Claims, bool) {
 	return nil, false
 }
 
+// isAlwaysOpen 判断是否「无需任何令牌即可访问」。
+//
+// 注意这里是**逐条精确列出**，而不是用 HasPrefix("/custom/auth/")：
+// 后者会把后续新增的 /custom/auth/credentials（改账号密码，必须登录）一起放行
+// —— 那等于把改密码的接口做成公开接口。同一前缀下混有公开与需鉴权的接口时，
+// 前缀匹配一定会出错，只能逐个列。
 func isAlwaysOpen(path string) bool {
-	return strings.HasPrefix(path, "/custom/auth/") ||
-		strings.HasPrefix(path, "/custom/sharelink/") ||
+	switch path {
+	case "/custom/auth/config", "/custom/auth/login",
+		"/custom/auth/verify", "/custom/auth/logout":
+		return true
+	}
+	return strings.HasPrefix(path, "/custom/sharelink/") ||
 		strings.HasPrefix(path, "/t/")
 }
 
 // isUserOnly 判断是否「必须已登录」的管理类接口。
 //
-// 注意这里用「相等或带斜杠的前缀」，不能用裸 HasPrefix("/custom/share")：
+// 同样用「相等或带斜杠的前缀」，不能用裸 HasPrefix("/custom/share")：
 // 那会把 /custom/sharelink/* 一起圈进来，而后者是访客兑换临时密码的接口，
 // 必须放行。这类「一个前缀吃掉另一个前缀」的问题在加路由时极易踩到。
 func isUserOnly(path string) bool {
+	// 改账号密码属于最高权限操作：必须是登录用户，临时链接令牌一律拒绝
+	if path == "/custom/auth/credentials" {
+		return true
+	}
 	return path == "/custom/share" || strings.HasPrefix(path, "/custom/share/")
 }
 
