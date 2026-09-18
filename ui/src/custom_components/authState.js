@@ -8,15 +8,20 @@
  *   这里只放状态与纯函数，不依赖任何上层模块。
  *
  * 两类令牌：
- *   - user  登录令牌：可持久化到 localStorage，用于整站访问。
- *   - share 临时链接令牌：来自 URL（/t/<token> 或 ?t=<token>），
- *     刻意**不落地**——它只属于本次访问，刷新时从 URL 重新解析即可。
+ *   - user  登录令牌（账号+密码换取）：持久化到 localStorage，用于整站访问。
+ *   - share 临时链接令牌（链接 id + 临时密码换取）：持久化到 sessionStorage，
+ *     按链接 id 分键。用 session 而不是 local 是因为它是「这一次测试」的凭据，
+ *     关掉标签页就该消失；分键则让同一个人同时开多条不同链接互不覆盖。
+ *
+ * 注意：URL 里的 /t/<id> 只是**链接标识**，不是凭据 —— 必须再用临时密码
+ * 兑换出共享令牌才能访问。所以这里对 id 与令牌是分开处理的。
  */
 
 import { reactive } from 'vue'
 
 const USER_TOKEN_KEY = 'nm_custom_user_token'
 const USER_EXP_KEY = 'nm_custom_user_exp'
+const SHARE_KEY_PREFIX = 'nm_custom_share_'
 
 export const authState = reactive({
   /** 当前令牌原文 */
@@ -30,7 +35,11 @@ export const authState = reactive({
   /** 后端是否启用了登录门（由 /custom/auth/config 得到） */
   enabled: false,
   /** 是否已完成一次启动期校验 */
-  checked: false
+  checked: false,
+  /** 当前登录账号名（kind=user 时由后端回显，仅用于界面展示） */
+  username: '',
+  /** kind=share 时对应的链接标识，用于清理 sessionStorage 与展示 */
+  linkId: ''
 })
 
 export const isShareMode = () => authState.kind === 'share'
@@ -42,6 +51,7 @@ export function setUserToken(token, expiresAt) {
   authState.kind = token ? 'user' : ''
   authState.scope = null
   authState.expiresAt = expiresAt || 0
+  authState.linkId = ''
   try {
     if (token) {
       localStorage.setItem(USER_TOKEN_KEY, token)
@@ -55,20 +65,51 @@ export function setUserToken(token, expiresAt) {
   }
 }
 
-/** 写入临时链接令牌（不持久化） */
-export function setShareToken(token, scope) {
+/** 写入临时链接令牌（按链接 id 存进 sessionStorage） */
+export function setShareToken(token, scope, linkId) {
   authState.token = token || ''
   authState.kind = token ? 'share' : ''
   authState.scope = scope || null
   authState.expiresAt = scope?.exp || 0
+  authState.linkId = linkId || ''
+  if (token && linkId) {
+    try {
+      sessionStorage.setItem(SHARE_KEY_PREFIX + linkId, token)
+    } catch (e) {
+      // 存不下也不影响本次访问，只是刷新后要重新输一次密码
+    }
+  }
+}
+
+/** 读取某条链接已兑换的令牌（刷新页面时免去重新输密码） */
+export function loadStoredShareToken(linkId) {
+  if (!linkId) return ''
+  try {
+    return sessionStorage.getItem(SHARE_KEY_PREFIX + linkId) || ''
+  } catch (e) {
+    return ''
+  }
+}
+
+/** 丢弃某条链接的令牌 */
+export function clearStoredShareToken(linkId) {
+  if (!linkId) return
+  try {
+    sessionStorage.removeItem(SHARE_KEY_PREFIX + linkId)
+  } catch (e) {
+    /* 同上 */
+  }
 }
 
 /** 清空认证状态 */
 export function clearAuth() {
+  const prevLink = authState.linkId
   authState.token = ''
   authState.kind = ''
   authState.scope = null
   authState.expiresAt = 0
+  authState.linkId = ''
+  clearStoredShareToken(prevLink)
   try {
     localStorage.removeItem(USER_TOKEN_KEY)
     localStorage.removeItem(USER_EXP_KEY)
@@ -119,10 +160,14 @@ export function appendToken(url, params) {
 }
 
 /**
- * 从当前页面 URL 解析临时链接令牌。
- * 支持两种形态：/t/<token> 与 ?t=<token>（后者用于 nginx 静态托管的部署）。
+ * 从当前页面 URL 解析临时链接标识。
+ *
+ * 返回的是**链接标识**（/t/<id> 里的 id），不是可用凭据 ——
+ * 还需要用临时密码去 /custom/sharelink/redeem 兑换令牌。
+ *
+ * 支持两种形态：/t/<id> 与 ?t=<id>（后者用于 nginx 静态托管的部署）。
  */
-export function parseShareTokenFromUrl(href) {
+export function parseShareLinkFromUrl(href) {
   try {
     const u = new URL(href || window.location.href)
     const q = u.searchParams.get('t') || ''
@@ -134,3 +179,6 @@ export function parseShareTokenFromUrl(href) {
     return ''
   }
 }
+
+/** 兼容旧名，语义同上 */
+export const parseShareTokenFromUrl = parseShareLinkFromUrl

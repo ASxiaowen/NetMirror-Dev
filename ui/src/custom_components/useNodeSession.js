@@ -16,7 +16,7 @@ import { uiConfig } from './ui.config.js'
 // === CUSTOM START: 会话 SSE 走统一 API 层 - By ASxiaowen ===
 // 理由: EventSource 不能自定义请求头，令牌必须由 apiClient 以 ?token= 形式附加，
 //       否则在启用登录门/临时链接后，节点会话一律 401。
-import { createEventSource } from './apiClient'
+import { createEventSource, verifyIdentity } from './apiClient'
 // === CUSTOM END: 会话 SSE 走统一 API 层 ===
 
 export function useNodeSession() {
@@ -104,6 +104,14 @@ export function useNodeSession() {
         lastError = err
         attempt++
         if (attempt > uiConfig.session.maxRetry) break
+
+        // 重试前先确认身份还在不在。
+        // SSE 的 onerror 拿不到状态码，若这里不查一次，被吊销 / 过期的令牌会让
+        // 页面永远停在「正在连接节点」上反复重试，用户看不到任何可行动的提示。
+        // 身份已失效时直接跳出重试，由外壳（RootShell）接管并给出对应引导。
+        const id = await verifyIdentity({ notify: true })
+        if (!id.valid) break
+
         await new Promise((r) => setTimeout(r, uiConfig.session.retryDelay))
       }
     }

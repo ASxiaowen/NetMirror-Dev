@@ -4,17 +4,15 @@
  *
  * 把「配置探测 → 校验已有令牌 → 登录 → 登出」这条链路收敛到一处，
  * RootShell 与 LoginView 只消费这里的状态，不直接碰接口。
+ *
+ * 临时链接的兑换不在本文件：它属于「访客侧」的流程，见 useShare.js
+ * 的 linkInfo / redeemLink。这样登录门与临时链接两条链路各自独立，
+ * 任何一条改动都不会牵动另一条。
  */
 
 import { ref } from 'vue'
 import { request, ErrCode } from './apiClient'
-import {
-  authState,
-  setUserToken,
-  setShareToken,
-  clearAuth,
-  loadStoredUserToken
-} from './authState'
+import { authState, setUserToken, clearAuth, loadStoredUserToken } from './authState'
 
 export function useAuth() {
   /** 后端登录门的公开配置 */
@@ -48,7 +46,9 @@ export function useAuth() {
     try {
       const d = await request('/custom/auth/verify')
       if (d?.valid) {
-        return { valid: true, kind: d.kind || d.scope?.kind || 'user', scope: d.scope || null }
+        const scope = d.scope || null
+        if (scope?.username) authState.username = scope.username
+        return { valid: true, kind: d.kind || scope?.kind || 'user', scope }
       }
       return { valid: false, error: d?.error || '令牌无效' }
     } catch (e) {
@@ -57,29 +57,32 @@ export function useAuth() {
   }
 
   /**
-   * 口令登录。
+   * 账号 + 密码登录。
+   * @param {string} username
    * @param {string} password
    * @returns {Promise<boolean>} 是否成功（失败时 error 已填好文案）
    */
-  const login = async (password) => {
+  const login = async (username, password) => {
     loading.value = true
     error.value = ''
     try {
       const d = await request('/custom/auth/login', {
         method: 'POST',
-        data: { password },
+        data: { username, password },
         timeout: 20000
       })
       if (!d?.success || !d?.token) {
         error.value = d?.error || '登录失败'
         return false
       }
+      authState.username = d.username || username
       setUserToken(d.token, d.expiresAt)
       return true
     } catch (e) {
+      // 后端对「账号错」与「密码错」返回同一文案，前端不做二次区分
       error.value =
         e?.code === ErrCode.AUTH_REQUIRED || e?.status === 401
-          ? '口令不正确'
+          ? '账号或密码不正确'
           : e?.message || '登录失败'
       return false
     } finally {
@@ -94,39 +97,22 @@ export function useAuth() {
     } catch (e) {
       // 后端不可达也要让本地登出成功
     }
+    authState.username = ''
     clearAuth()
   }
 
   /**
-   * 启动期解析身份。优先处理 URL 上的临时链接令牌，其次用本地持久化的登录令牌。
-   * @returns {Promise<'share'|'user'|'none'|'share-invalid'>}
+   * 启动期解析身份：仅处理本地持久化的登录令牌。
+   * 临时链接的令牌由 RootShell 走「查链接信息 → 输密码 → 兑换」流程建立。
+   * @returns {Promise<'user'|'none'>}
    */
-  const bootstrapIdentity = async (shareToken) => {
-    if (shareToken) {
-      try {
-        const d = await request(`/custom/link/${encodeURIComponent(shareToken)}`, { timeout: 15000 })
-        if (d?.valid && d?.scope) {
-          setShareToken(shareToken, d.scope)
-          return 'share'
-        }
-      } catch (e) {
-        // 失效原因（过期 / 吊销）写进 error 供落地页展示
-        error.value = e?.payload?.error || e?.message || '该临时链接不可用'
-        return 'share-invalid'
-      }
-      error.value = '该临时链接不可用'
-      return 'share-invalid'
-    }
-
+  const bootstrapIdentity = async () => {
     const stored = loadStoredUserToken()
-    if (stored) {
-      setUserToken(stored, 0)
-      const r = await verify()
-      if (r.valid) return 'user'
-      // 令牌已失效：verify 内部已通过 onAuthExpired 之外的方式失败，这里显式清掉
-      clearAuth()
-      return 'none'
-    }
+    if (!stored) return 'none'
+    setUserToken(stored, 0)
+    const r = await verify()
+    if (r.valid) return 'user'
+    clearAuth()
     return 'none'
   }
 

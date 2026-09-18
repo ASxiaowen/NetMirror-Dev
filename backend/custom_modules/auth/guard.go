@@ -161,12 +161,17 @@ func authorize(c *gin.Context) (*Claims, bool) {
 
 func isAlwaysOpen(path string) bool {
 	return strings.HasPrefix(path, "/custom/auth/") ||
-		strings.HasPrefix(path, "/custom/link/") ||
+		strings.HasPrefix(path, "/custom/sharelink/") ||
 		strings.HasPrefix(path, "/t/")
 }
 
+// isUserOnly 判断是否「必须已登录」的管理类接口。
+//
+// 注意这里用「相等或带斜杠的前缀」，不能用裸 HasPrefix("/custom/share")：
+// 那会把 /custom/sharelink/* 一起圈进来，而后者是访客兑换临时密码的接口，
+// 必须放行。这类「一个前缀吃掉另一个前缀」的问题在加路由时极易踩到。
 func isUserOnly(path string) bool {
-	return strings.HasPrefix(path, "/custom/share")
+	return path == "/custom/share" || strings.HasPrefix(path, "/custom/share/")
 }
 
 func isProtected(path string) bool {

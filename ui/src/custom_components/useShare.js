@@ -72,8 +72,8 @@ export function lockedNodeFromScope() {
   if (!s || !s.nodeUrl) return null
   return {
     id: s.nodeId || '',
-    name: s.nodeId || s.note || 'Shared node',
-    location: '',
+    name: s.nodeName || s.nodeId || 'Shared node',
+    location: s.note || '',
     url: String(s.nodeUrl).replace(/\/+$/, '')
   }
 }
@@ -89,7 +89,8 @@ export function restrictedNode() {
   return isShareMode() ? lockedNodeFromScope() : null
 }
 
-/** 剩余秒数（响应式，随 scope.exp 计算） */export const shareLeftSeconds = computed(() => {
+/** 剩余秒数（响应式，随 scope.exp 计算） */
+export const shareLeftSeconds = computed(() => {
   const exp = authState.scope?.exp || 0
   if (!exp) return 0
   return Math.max(0, exp - Math.floor(Date.now() / 1000))
@@ -105,14 +106,34 @@ export function formatDuration(secs) {
 }
 
 export function useShare() {
-  /** 换取作用域（访客侧，无需登录） */
-  const resolveLink = async (token) => {
-    const d = await request(`/custom/link/${encodeURIComponent(token)}`, { timeout: 15000 })
-    if (!d?.valid || !d?.scope) throw new Error(d?.error || '临时链接无效')
-    return d.scope
+  /**
+   * 查询链接信息（访客侧，无需登录、无需密码）。
+   * 用于在输入密码前展示「这条链接给了我什么」，让对方确认链接是不是给自己的。
+   */
+  const linkInfo = async (id) => {
+    const d = await request('/custom/sharelink/info', {
+      params: { id },
+      timeout: 15000
+    })
+    if (!d?.valid || !d?.info) throw new Error(d?.error || '该临时链接不可用')
+    return d.info
   }
 
-  /** 创建临时链接（需登录） */
+  /**
+   * 用「链接标识 + 临时密码」兑换受限作用域的令牌（访客侧，无需登录）。
+   * @returns {Promise<{token:string, scope:object, expiresAt:number}>}
+   */
+  const redeemLink = async (id, password) => {
+    const d = await request('/custom/sharelink/redeem', {
+      method: 'POST',
+      data: { id, password },
+      timeout: 15000
+    })
+    if (!d?.success || !d?.token) throw new Error(d?.error || '兑换失败')
+    return { token: d.token, scope: d.scope || {}, expiresAt: d.expiresAt || 0 }
+  }
+
+  /** 创建临时链接（需登录）。响应里带一次性展示的临时密码。 */
   const createShare = async (payload) => {
     const d = await request('/custom/share', {
       method: 'POST',
@@ -123,7 +144,7 @@ export function useShare() {
     return d
   }
 
-  /** 列出全部临时链接（需登录） */
+  /** 列出全部临时链接（需登录）。列表不含密码，只有可再次复制的链接。 */
   const listShares = async () => {
     const d = await request('/custom/share', { timeout: 20000 })
     return d?.shares || []
@@ -139,7 +160,7 @@ export function useShare() {
     return true
   }
 
-  return { resolveLink, createShare, listShares, revokeShare }
+  return { linkInfo, redeemLink, createShare, listShares, revokeShare }
 }
 
 export default useShare

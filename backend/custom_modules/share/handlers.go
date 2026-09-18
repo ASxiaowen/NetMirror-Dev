@@ -19,16 +19,18 @@ const (
 // RegisterRoutes 挂载临时链接路由（挂载点为 /custom）。
 //
 // 权限分工（由 auth.Guard 按路径判断）：
-//   - /custom/share → 仅登录用户（增删查）
-//   - /custom/link/:token → 永远放行，供链接持有者换取作用域
+//   - /custom/share        → 仅登录用户（增删查），见 auth.isUserOnly
+//   - /custom/sharelink/*  → 永远放行，供链接持有者查看信息并兑换临时密码
 //
-// 校验接口刻意不放在 /custom/share/resolve/:token —— 那会与 /custom/share/:id
-// 在同一层形成「静态段 vs 参数段」的兄弟节点，gin 的路由树不允许这种冲突。
+// 路由命名刻意让 /share 与 /sharelink 成为同级的不同静态段，
+// 避免 gin 路由树里「静态段 vs 参数段」在兄弟节点上的冲突。
 func RegisterRoutes(g *gin.RouterGroup) {
 	g.GET("/share", handleList)
 	g.POST("/share", handleCreate)
 	g.DELETE("/share/:id", handleRevoke)
-	g.GET("/link/:token", handleResolve)
+
+	g.GET("/sharelink/info", handleLinkInfo)
+	g.POST("/sharelink/redeem", handleRedeem)
 }
 
 type createRequest struct {
@@ -38,6 +40,11 @@ type createRequest struct {
 	NodeURL    string   `json:"nodeUrl"`
 	Tools      []string `json:"tools"`
 	TTLSeconds int      `json:"ttlSeconds"`
+}
+
+type redeemRequest struct {
+	ID       string `json:"id"`
+	Password string `json:"password"`
 }
 
 // baseURL 依据请求推断对外可访问的地址，用于拼出可直接分享的链接
@@ -50,6 +57,54 @@ func baseURL(c *gin.Context) string {
 		scheme = strings.Split(p, ",")[0]
 	}
 	return scheme + "://" + c.Request.Host
+}
+
+// linkPath 由记录 id 拼出链接路径
+func linkPath(id string) string { return "/t/" + id }
+
+// groupPassword 把 16 位十六进制临时密码按 4 位分组，便于人工抄写与输入。
+// 纯展示形式，校验时会先剥掉分隔符。
+func groupPassword(raw string) string {
+	if len(raw) != 16 {
+		return raw
+	}
+	return raw[0:4] + "-" + raw[4:8] + "-" + raw[8:12] + "-" + raw[12:16]
+}
+
+// normalizePassword 去掉用户输入里的分隔符/空白并统一小写，
+// 让「带不带横杠」「大小写」都不影响兑换。
+func normalizePassword(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	var b strings.Builder
+	for _, r := range s {
+		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// recordView 把记录转成给管理端的响应体 —— 白名单式列出字段，
+// PassHash 永远不会被带出去（不是靠记得删，而是根本没写进来）。
+func recordView(c *gin.Context, r *Record) gin.H {
+	return gin.H{
+		"id":        r.ID,
+		"note":      r.Note,
+		"nodeId":    r.NodeID,
+		"nodeName":  r.NodeName,
+		"nodeUrl":   r.NodeURL,
+		"tools":     r.Tools,
+		"createdAt": r.CreatedAt,
+		"expiresAt": r.ExpiresAt,
+		"createdIp": r.CreatedIP,
+		"revoked":   r.Revoked,
+		"useCount":  r.UseCount,
+		"lastUseAt": r.LastUseAt,
+		"status":    r.Status(),
+		"path":      linkPath(r.ID),
+		"url":       baseURL(c) + linkPath(r.ID),
+		"leftSecs":  r.LeftSeconds(),
+	}
 }
 
 func handleCreate(c *gin.Context) {
@@ -100,37 +155,30 @@ func handleCreate(c *gin.Context) {
 		ttl = maxTTLSeconds
 	}
 
-	now := time.Now()
-	jti := auth.NewJti("s_")
-
-	claims := &auth.Claims{
-		Kind:    auth.KindShare,
-		Sub:     "share",
-		Jti:     jti,
-		NodeID:  strings.TrimSpace(req.NodeID),
-		NodeURL: nodeURL,
-		Tools:   tools,
-		Note:    strings.TrimSpace(req.Note),
-		Iat:     now.Unix(),
-		Exp:     now.Add(time.Duration(ttl) * time.Second).Unix(),
-	}
-
-	token, err := auth.Sign(claims)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "code": "SIGN_FAILED", "error": "签发失败: " + err.Error()})
+	// 生成两件凭证：链接 id（非秘密）与临时密码（秘密）
+	linkID := auth.NewJti("t_")
+	rawPwd := auth.RandHex(8) // 8 字节 = 16 位十六进制 = 64 bit 熵
+	if linkID == "" || rawPwd == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false, "code": "RAND_FAILED",
+			"error": "随机源不可用，已拒绝签发（不使用可预测的密码）",
+		})
 		return
 	}
 
+	now := time.Now()
+	exp := now.Add(time.Duration(ttl) * time.Second).Unix()
+
 	rec := &Record{
-		ID:        auth.NewJti("rec_"),
-		Jti:       jti,
-		Note:      claims.Note,
-		NodeID:    claims.NodeID,
+		ID:        linkID,
+		Note:      strings.TrimSpace(req.Note),
+		NodeID:    strings.TrimSpace(req.NodeID),
 		NodeURL:   nodeURL,
 		NodeName:  strings.TrimSpace(req.NodeName),
+		PassHash:  auth.HashSecret(linkID, rawPwd),
 		Tools:     tools,
 		CreatedAt: now.Unix(),
-		ExpiresAt: claims.Exp,
+		ExpiresAt: exp,
 		CreatedBy: "panel",
 		CreatedIP: c.ClientIP(),
 	}
@@ -139,35 +187,23 @@ func handleCreate(c *gin.Context) {
 		return
 	}
 
-	path := "/t/" + token
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"record":  rec,
-		"token":   token,
-		"path":    path,
-		"url":     baseURL(c) + path,
+		"record":  recordView(c, rec),
+		// 密码明文只在这一次响应里出现，之后任何接口都不再回显。
+		// 前端必须提示管理员立刻复制保存。
+		"password":  groupPassword(rawPwd),
+		"path":      linkPath(linkID),
+		"url":       baseURL(c) + linkPath(linkID),
+		"expiresAt": exp,
 	})
 }
 
 func handleList(c *gin.Context) {
 	list := db.List()
-	// 补一个状态字段，前端不用自己算时间
 	out := make([]gin.H, 0, len(list))
 	for _, r := range list {
-		out = append(out, gin.H{
-			"id":        r.ID,
-			"note":      r.Note,
-			"nodeId":    r.NodeID,
-			"nodeName":  r.NodeName,
-			"nodeUrl":   r.NodeURL,
-			"tools":     r.Tools,
-			"createdAt": r.CreatedAt,
-			"expiresAt": r.ExpiresAt,
-			"createdIp": r.CreatedIP,
-			"revoked":   r.Revoked,
-			"useCount":  r.UseCount,
-			"status":    r.Status(),
-		})
+		out = append(out, recordView(c, r))
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "shares": out})
 }
@@ -181,54 +217,181 @@ func handleRevoke(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
-// handleResolve 供链接持有者（未登录）换取作用域。
-// 令牌本身已由签名 + exp 保证有效，这里额外查一次吊销状态与使用计数。
-func handleResolve(c *gin.Context) {
-	token := c.Param("token")
-	claims, err := auth.Verify(token)
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "valid": false, "error": err.Error()})
+// handleLinkInfo 供链接持有者在输入密码前查看「这条链接给了我什么」。
+//
+// 永远放行。只回非秘密信息：不含密码派生值、不含签名令牌。
+// 回显节点与工具是刻意的 —— 对方能在输密码前确认这条链接是不是给自己的、
+// 能做什么；而这些信息即使泄露也不构成访问能力。
+func handleLinkInfo(c *gin.Context) {
+	id := strings.TrimSpace(c.Query("id"))
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "code": "BAD_REQUEST", "error": "缺少链接标识"})
 		return
 	}
-	if claims.Kind != auth.KindShare {
-		c.JSON(http.StatusForbidden, gin.H{"success": false, "valid": false, "error": "该令牌不是临时链接"})
+	rec, ok := db.FindByID(id)
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{
+			"success": false, "valid": false, "code": "LINK_NOT_FOUND",
+			"error": "链接不存在，请向发送方确认地址是否完整",
+		})
 		return
 	}
-
-	// 有记录才校验吊销；没有记录说明本机不是签发方，交给 exp 兜底
-	if rec, ok := db.Lookup(claims.Jti); ok {
-		if rec.Revoked {
-			c.JSON(http.StatusForbidden, gin.H{"success": false, "valid": false, "error": "该临时链接已被吊销"})
-			return
-		}
-		if rec.Expired() {
-			c.JSON(http.StatusUnauthorized, gin.H{"success": false, "valid": false, "error": "该临时链接已过期"})
-			return
-		}
-		db.BumpUse(claims.Jti)
+	if rec.Revoked {
+		c.JSON(http.StatusForbidden, gin.H{
+			"success": false, "valid": false, "code": "LINK_REVOKED",
+			"error": "该链接已被发送方吊销",
+		})
+		return
+	}
+	if rec.Expired() {
+		c.JSON(http.StatusGone, gin.H{
+			"success": false, "valid": false, "code": "LINK_EXPIRED",
+			"error": "该链接已过期，请向发送方索取新的链接",
+		})
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"valid":   true,
-		"scope": gin.H{
-			"kind":     claims.Kind,
-			"jti":      claims.Jti,
-			"note":     claims.Note,
-			"nodeId":   claims.NodeID,
-			"nodeUrl":  claims.NodeURL,
-			"tools":    claims.Tools,
-			"exp":      claims.Exp,
-			"leftSecs": maxInt64(0, claims.Exp-time.Now().Unix()),
+		"info": gin.H{
+			"nodeName":   firstNonEmpty(rec.NodeName, rec.NodeID, rec.NodeURL),
+			"note":       rec.Note,
+			"tools":      rec.Tools,
+			"expiresAt":  rec.ExpiresAt,
+			"leftSecs":   rec.LeftSeconds(),
+			"needPasswd": true,
 		},
 	})
 }
 
-func maxInt64(a, b int64) int64 {
-	if a > b {
-		return a
+// handleRedeem 用「链接标识 + 临时密码」换取受限作用域的令牌。
+//
+// 这是访客唯一的入口，因此：
+//   - 密码用定长比较（auth.CompareSecret）；
+//   - 连续失败达阈值后按记录锁定一段时间（内存态，重启清零）；
+//   - 令牌的 exp 取记录的剩余有效期，不会因 TokenTTLHours 而超期。
+func handleRedeem(c *gin.Context) {
+	var req redeemRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "code": "BAD_REQUEST", "error": "请求格式错误"})
+		return
 	}
-	return b
+
+	id := strings.TrimSpace(req.ID)
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "code": "BAD_REQUEST", "error": "缺少链接标识"})
+		return
+	}
+
+	if ok, left := allowAttempt(id); !ok {
+		c.JSON(http.StatusTooManyRequests, gin.H{
+			"success": false, "code": "RATE_LIMITED",
+			"error": "临时密码错误次数过多，请在 " + humanDuration(left) + "后重试",
+		})
+		return
+	}
+
+	rec, ok := db.FindByID(id)
+	if !ok {
+		// 链接标识是 64 bit 随机串，不担心被枚举；直接说明原因对使用者更友好
+		c.JSON(http.StatusNotFound, gin.H{
+			"success": false, "code": "LINK_NOT_FOUND",
+			"error": "链接不存在，请向发送方确认地址是否完整",
+		})
+		return
+	}
+	if rec.Revoked {
+		c.JSON(http.StatusForbidden, gin.H{
+			"success": false, "code": "LINK_REVOKED",
+			"error": "该链接已被发送方吊销",
+		})
+		return
+	}
+	if rec.Expired() {
+		c.JSON(http.StatusGone, gin.H{
+			"success": false, "code": "LINK_EXPIRED",
+			"error": "该链接已过期，请向发送方索取新的链接",
+		})
+		return
+	}
+
+	if !auth.CompareSecret(rec.ID, normalizePassword(req.Password), rec.PassHash) {
+		locked, left := noteFailure(id)
+		msg := "临时密码不正确"
+		if locked {
+			msg = "临时密码连续错误次数过多，已锁定 " + humanDuration(left)
+		}
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"success": false, "code": "BAD_PASSWORD",
+			"error": msg,
+		})
+		return
+	}
+	clearAttempts(id)
+
+	// 令牌的 jti 直接取记录 id：守卫的吊销回调按它查库，一处 id 贯穿到底
+	claims := &auth.Claims{
+		Kind:    auth.KindShare,
+		Sub:     "share",
+		Jti:     rec.ID,
+		NodeID:  rec.NodeID,
+		NodeURL: rec.NodeURL,
+		Tools:   rec.Tools,
+		Note:    rec.Note,
+		Iat:     time.Now().Unix(),
+		Exp:     rec.ExpiresAt,
+	}
+	token, err := auth.Sign(claims)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false, "code": "SIGN_FAILED", "error": "签发失败: " + err.Error(),
+		})
+		return
+	}
+
+	db.BumpUse(rec.ID)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":   true,
+		"token":     token,
+		"expiresAt": rec.ExpiresAt,
+		"scope": gin.H{
+			"kind":     auth.KindShare,
+			"jti":      rec.ID,
+			"note":     rec.Note,
+			"nodeId":   rec.NodeID,
+			"nodeUrl":  rec.NodeURL,
+			"nodeName": firstNonEmpty(rec.NodeName, rec.NodeID, rec.NodeURL),
+			"tools":    rec.Tools,
+			"exp":      rec.ExpiresAt,
+			"leftSecs": rec.LeftSeconds(),
+		},
+	})
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// humanDuration 把时长说成人话（用于限流提示）
+func humanDuration(d time.Duration) string {
+	if d <= 0 {
+		return "片刻"
+	}
+	m := int(d.Minutes())
+	if m <= 0 {
+		return "不到 1 分钟"
+	}
+	if m < 60 {
+		return strconv.Itoa(m) + " 分钟"
+	}
+	return strconv.Itoa(m/60) + " 小时"
 }
 
 // ParseTTL 把 "1h" / "30m" / "7d" / "3600" 这类输入解析成秒；解析失败回退到默认值。

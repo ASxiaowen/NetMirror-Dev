@@ -2,9 +2,11 @@ package auth
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -171,4 +173,39 @@ func ExtractToken(authorization, headerToken, queryToken string) string {
 		return strings.TrimSpace(headerToken)
 	}
 	return strings.TrimSpace(queryToken)
+}
+
+// HashSecret 把「标识 + 明文」派生成可落库的校验值（临时链接密码用）。
+//
+// 为什么用 HMAC 而不是 bcrypt：
+//   - 该密码由服务端随机生成（16 位十六进制 = 64 bit 熵），不存在字典空间，
+//     不需要慢哈希来抵抗离线爆破；
+//   - 把标识一起纳入 HMAC 输入，等于绑定了记录本身 —— 同一条密码换到别的
+//     记录上哈希不同，落库的哈希值无法在记录之间搬运复用。
+//
+// 密钥取签名密钥，因此本机无需额外配置；换 AUTH_SECRET 会让所有已发出的
+// 临时密码立即失效（与「换密钥即全端下线」的语义一致）。
+func HashSecret(id, plain string) string {
+	mac := hmac.New(sha256.New, Cfg.Secret)
+	mac.Write([]byte("share-pwd::" + id + "::" + plain))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// CompareSecret 定长比较明文与落库哈希，避免时序侧信道。
+func CompareSecret(id, plain, want string) bool {
+	if want == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(HashSecret(id, plain)), []byte(want)) == 1
+}
+
+// RandHex 生成 n 字节随机数的十六进制串，供令牌 id、链接标识、临时密码使用。
+func RandHex(n int) string {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		// 随机源不可用属于不可恢复的环境故障；返回空串让调用方拒绝签发，
+		// 而不是拿可预测的值当密码用。
+		return ""
+	}
+	return hex.EncodeToString(b)
 }

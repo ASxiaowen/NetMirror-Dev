@@ -3,7 +3,13 @@
   目录: ui/src/custom_components/ShareAdminDialog.vue
 
   由 RootShell 在「已登录」状态下挂一个右下角入口按钮打开（不改 AdminPanel.vue，避免动上游文件）。
-  三种操作：生成（选节点 + 挑工具 + 设有效期 + 备注）、复制、吊销。-->
+  操作：生成（选节点 + 挑工具 + 设有效期 + 备注）、复制链接/密码、吊销。
+
+  两件凭证的分工（界面必须讲清楚，否则管理员会把密码一起发出去，等于白设）：
+    · 链接   —— 不是秘密，可以重发、可以从列表里再次复制
+    · 密码   —— 是秘密，只在生成那一刻返回一次，之后任何接口都不回显
+  所以这两行各有独立的复制按钮，并明确提示要「分开发送」。
+-->
 
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
@@ -25,15 +31,18 @@ const selectedTools = ref([...DEFAULT_TOOLS])
 
 const creating = ref(false)
 const createError = ref('')
-/** 生成成功后的结果，用于展示可复制链接 */
+/** 生成成功后的结果：链接与一次性密码 */
 const created = ref(null)
-const copied = ref(false)
+/** 哪一项刚被复制：'' | 'url' | 'password' */
+const copied = ref('')
 
 // ---- 列表 ----
 const shares = ref([])
 const listLoading = ref(false)
 const listError = ref('')
 const revokingId = ref('')
+/** 列表里刚复制过的记录 id */
+const listCopiedId = ref('')
 
 const nodes = computed(() => nodesStore.nodes || [])
 
@@ -66,7 +75,7 @@ const toggleTool = (id) => {
 const submit = async () => {
   createError.value = ''
   created.value = null
-  copied.value = false
+  copied.value = ''
 
   if (!nodeUrl.value) {
     createError.value = '请先选择要分享的节点'
@@ -98,15 +107,30 @@ const submit = async () => {
   }
 }
 
-const copyLink = async () => {
-  if (!created.value?.url) return
+/** 复制指定文本；非安全上下文下 clipboard 不可用则退化为选中 */
+const copyText = async (text, which) => {
+  if (!text) return
   try {
-    await navigator.clipboard.writeText(created.value.url)
-    copied.value = true
-    setTimeout(() => (copied.value = false), 2000)
+    await navigator.clipboard.writeText(text)
+    copied.value = which
+    setTimeout(() => {
+      if (copied.value === which) copied.value = ''
+    }, 2000)
   } catch (e) {
-    // 非安全上下文（http）下 clipboard 不可用，退化为选中文本
-    copied.value = false
+    copied.value = ''
+  }
+}
+
+const copyListUrl = async (url, id) => {
+  if (!url) return
+  try {
+    await navigator.clipboard.writeText(url)
+    listCopiedId.value = id
+    setTimeout(() => {
+      if (listCopiedId.value === id) listCopiedId.value = ''
+    }, 2000)
+  } catch (e) {
+    listCopiedId.value = ''
   }
 }
 
@@ -163,7 +187,7 @@ onMounted(() => {
           <div class="min-w-0">
             <h2 class="text-[15px] font-semibold text-gray-900 dark:text-gray-100">临时测试链接</h2>
             <p class="mt-0.5 text-[12px] text-gray-500 dark:text-gray-400">
-              生成一条限定节点与功能的链接发给客户或同事，到期自动失效，也可随时吊销。
+              生成一条限定节点与功能的链接，同时得到一个临时密码。两者<b>分开发送</b>，对方打开链接后输入密码才能使用；到期自动失效，也可随时吊销。
             </p>
           </div>
           <button
@@ -179,7 +203,7 @@ onMounted(() => {
         <!-- 页签 -->
         <div class="mb-4 flex gap-1 rounded-lg bg-gray-100/80 p-1 dark:bg-white/[0.04]">
           <button
-            v-for="t in [{ k: 'create', n: '生成链接' }, { k: 'list', n: '已生成' }]"
+            v-for="t in [{ k: 'create', n: '生成链接与密码' }, { k: 'list', n: '已生成' }]"
             :key="t.k"
             class="flex-1 rounded-md px-3 py-1.5 text-[12px] font-medium transition-colors"
             :class="
@@ -308,34 +332,73 @@ onMounted(() => {
               @click="submit"
             >
               <div v-if="creating" class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white"></div>
-              {{ creating ? '生成中…' : '生成链接' }}
+              {{ creating ? '生成中…' : '生成链接与密码' }}
             </button>
           </div>
 
-          <!-- 生成结果 -->
+          <!-- 生成结果：链接与密码分两行，各带独立复制按钮 -->
           <div
             v-if="created"
-            class="rounded-lg border border-emerald-200 bg-emerald-50/70 p-3 dark:border-emerald-500/20 dark:bg-emerald-500/[0.08]"
+            class="space-y-3 rounded-lg border border-emerald-200 bg-emerald-50/70 p-3 dark:border-emerald-500/20 dark:bg-emerald-500/[0.08]"
           >
-            <div class="mb-1.5 flex items-center gap-1.5 text-[12px] font-medium text-emerald-800 dark:text-emerald-300">
+            <div class="flex items-center gap-1.5 text-[12px] font-medium text-emerald-800 dark:text-emerald-300">
               <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
               </svg>
               已生成，有效期 {{ formatDuration(ttl) }}
             </div>
-            <div class="flex items-center gap-2">
-              <input
-                :value="created.url"
-                readonly
-                class="min-w-0 flex-1 rounded-md border border-emerald-200/80 bg-white px-2.5 py-1.5 font-mono text-[11px] text-gray-700 dark:border-emerald-500/20 dark:bg-black/20 dark:text-gray-200"
-                @focus="$event.target.select()"
-              />
-              <button
-                class="flex-shrink-0 rounded-md bg-emerald-600 px-2.5 py-1.5 text-[12px] font-medium text-white transition-colors hover:bg-emerald-700"
-                @click="copyLink"
-              >
-                {{ copied ? '已复制' : '复制' }}
-              </button>
+
+            <!-- 链接：不是秘密，可重发 -->
+            <div>
+              <div class="mb-1 flex items-baseline justify-between gap-2">
+                <span class="text-[11px] font-medium uppercase tracking-wider text-emerald-700/80 dark:text-emerald-400/80">
+                  链接（可随时从「已生成」里再复制）
+                </span>
+              </div>
+              <div class="flex items-center gap-2">
+                <input
+                  :value="created.url"
+                  readonly
+                  class="min-w-0 flex-1 rounded-md border border-emerald-200/80 bg-white px-2.5 py-1.5 font-mono text-[11px] text-gray-700 dark:border-emerald-500/20 dark:bg-black/20 dark:text-gray-200"
+                  @focus="$event.target.select()"
+                />
+                <button
+                  class="flex-shrink-0 rounded-md bg-emerald-600 px-2.5 py-1.5 text-[12px] font-medium text-white transition-colors hover:bg-emerald-700"
+                  @click="copyText(created.url, 'url')"
+                >
+                  {{ copied === 'url' ? '已复制' : '复制' }}
+                </button>
+              </div>
+            </div>
+
+            <!-- 密码：秘密，只显示这一次 -->
+            <div>
+              <div class="mb-1 flex items-baseline justify-between gap-2">
+                <span class="text-[11px] font-medium uppercase tracking-wider text-emerald-700/80 dark:text-emerald-400/80">
+                  临时密码（关闭后不再显示）
+                </span>
+              </div>
+              <div class="flex items-center gap-2">
+                <input
+                  :value="created.password"
+                  readonly
+                  class="min-w-0 flex-1 rounded-md border border-emerald-300/80 bg-white px-2.5 py-1.5 text-center font-mono text-[13px] tracking-wide text-gray-800 dark:border-emerald-500/25 dark:bg-black/20 dark:text-gray-100"
+                  @focus="$event.target.select()"
+                />
+                <button
+                  class="flex-shrink-0 rounded-md bg-emerald-600 px-2.5 py-1.5 text-[12px] font-medium text-white transition-colors hover:bg-emerald-700"
+                  @click="copyText(created.password, 'password')"
+                >
+                  {{ copied === 'password' ? '已复制' : '复制' }}
+                </button>
+              </div>
+              <p class="mt-1.5 flex items-start gap-1.5 text-[11px] leading-relaxed text-amber-700 dark:text-amber-400">
+                <svg class="mt-px h-3 w-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"></path>
+                </svg>
+                <span>密码只在此刻显示一次，请先复制保存。把链接和密码<b>分两条消息</b>发给对方 —— 只要链接被转发出去，没有密码也进不来。</span>
+              </p>
             </div>
           </div>
         </div>
@@ -373,6 +436,15 @@ onMounted(() => {
               {{ fmtTime(s.expiresAt) }} 过期
             </span>
             <span class="text-[11px] text-gray-400 dark:text-gray-500">用 {{ s.useCount }} 次</span>
+
+            <!-- 链接可重取；密码不可重取，所以这里只给链接的复制入口 -->
+            <button
+              v-if="s.status === 'active'"
+              class="flex-shrink-0 rounded-md px-2 py-1 text-[11px] font-medium text-gray-600 ring-1 ring-inset ring-gray-200 transition-colors hover:bg-gray-50 dark:text-gray-300 dark:ring-white/[0.08] dark:hover:bg-white/[0.06]"
+              @click="copyListUrl(s.url, s.id)"
+            >
+              {{ listCopiedId === s.id ? '已复制' : '复制链接' }}
+            </button>
             <button
               v-if="s.status === 'active'"
               :disabled="revokingId === s.id"
@@ -382,6 +454,13 @@ onMounted(() => {
               {{ revokingId === s.id ? '吊销中…' : '吊销' }}
             </button>
           </div>
+
+          <p
+            v-if="shares.length"
+            class="pt-1 text-[11px] leading-relaxed text-gray-400 dark:text-gray-500"
+          >
+            临时密码不会保存在服务器上，列表里无法再查看。忘记密码时请吊销这条并重新生成一条。
+          </p>
         </div>
       </div>
     </div>

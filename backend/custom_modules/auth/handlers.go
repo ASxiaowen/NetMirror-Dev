@@ -1,29 +1,21 @@
 package auth
 
 import (
-	"crypto/rand"
 	"crypto/subtle"
-	"encoding/hex"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
-// randHex 生成 n 字节随机数的十六进制串，用于令牌 id
-func randHex(n int) string {
-	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		return "fallback"
-	}
-	return hex.EncodeToString(b)
-}
-
 // NewJti 生成一个令牌唯一 id（带前缀便于区分类型）
 func NewJti(prefix string) string {
-	return prefix + randHex(8)
+	return prefix + RandHex(8)
 }
 
 type loginRequest struct {
+	Username string `json:"username"`
 	Password string `json:"password"`
 }
 
@@ -37,7 +29,7 @@ func RegisterRoutes(g *gin.RouterGroup) {
 }
 
 // handlePublicConfig 给登录页用的公开信息：是否启用、令牌有效期。
-// 只暴露非敏感项，口令与密钥永不出现在响应里。
+// 只暴露非敏感项，账号、密码与密钥永不出现在响应里。
 func handlePublicConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success":       true,
@@ -66,19 +58,25 @@ func handleLogin(c *gin.Context) {
 		return
 	}
 
-	// 定长比较，避免时序侧信道泄漏口令长度与内容
-	if subtle.ConstantTimeCompare([]byte(req.Password), []byte(Cfg.Password)) != 1 {
+	user := strings.TrimSpace(req.Username)
+
+	// 账号与密码都用定长比较，避免时序侧信道；两个比较都执行完再判断，
+	// 不因账号错就短路返回，否则响应耗时会泄漏「账号是否存在」。
+	userOK := subtle.ConstantTimeCompare([]byte(user), []byte(Cfg.Username)) == 1
+	passOK := subtle.ConstantTimeCompare([]byte(req.Password), []byte(Cfg.Password)) == 1
+	if !userOK || !passOK {
+		// 刻意不区分「账号不存在」与「密码错误」—— 避免被用来枚举账号
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"success": false,
 			"code":    CodeAuthRequired,
-			"error":   "口令不正确",
+			"error":   "账号或密码不正确",
 		})
 		return
 	}
 
 	claims := &Claims{
 		Kind: KindUser,
-		Sub:  "panel",
+		Sub:  Cfg.Username,
 		Jti:  NewJti("u_"),
 	}
 	token, err := Sign(claims)
@@ -95,6 +93,7 @@ func handleLogin(c *gin.Context) {
 		"success":   true,
 		"token":     token,
 		"kind":      KindUser,
+		"username":  Cfg.Username,
 		"expiresAt": claims.Exp,
 		"clientIP":  c.ClientIP(),
 	})
@@ -106,12 +105,25 @@ func tokenSummary(cl *Claims) gin.H {
 		"kind": cl.Kind,
 		"exp":  cl.Exp,
 		"note": cl.Note,
+		"sub":  cl.Sub,
 	}
 	if cl.Kind == KindShare {
 		h["nodeId"] = cl.NodeID
 		h["nodeUrl"] = cl.NodeURL
+		// nodeName 与 redeem 的 scope 保持一致：刷新页面时外壳走的是 verify 这条路径，
+		// 少了它受限模式的节点名会退化成 id。
+		h["nodeName"] = cl.NodeID
 		h["tools"] = cl.Tools
 		h["jti"] = cl.Jti
+		if cl.Exp > 0 {
+			if left := cl.Exp - time.Now().Unix(); left > 0 {
+				h["leftSecs"] = left
+			} else {
+				h["leftSecs"] = 0
+			}
+		}
+	} else {
+		h["username"] = cl.Sub
 	}
 	return h
 }
@@ -133,6 +145,29 @@ func handleVerify(c *gin.Context) {
 		})
 		return
 	}
+
+	// 临时链接令牌还要问一次吊销名单。
+	//
+	// 为什么非得在这里查：/custom/auth/verify 属于「永远放行」路径，Guard 不会
+	// 为它做作用域校验。若这里只看签名与 exp，被吊销的链接在令牌自然到期前
+	// 仍会被判为有效 —— 前端刷新页面时就会直接进入受限模式，随后每个真实请求
+	// 才陆续 403，表现为「页面进来了但一直在连接节点」。
+	//
+	// 返回 200 + valid:false（而不是 401）：本接口的语义是「这个令牌还能用吗」，
+	// 用正常报文作答更方便前端区分「令牌格式坏」与「被吊销」。
+	if cl.Kind == KindShare && RevocationChecker != nil {
+		if revoked, known := RevocationChecker(cl.Jti); known && revoked {
+			c.JSON(http.StatusOK, gin.H{
+				"success": true,
+				"valid":   false,
+				"enabled": true,
+				"code":    CodeForbidden,
+				"error":   "该临时链接已被吊销或已过期",
+			})
+			return
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"valid":   true,

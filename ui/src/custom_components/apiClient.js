@@ -212,4 +212,34 @@ export function authEnabled() {
   return !!authState.enabled
 }
 
-export default { request, createEventSource, authedUrl, isSameOrigin, ErrCode, ErrMessage, ApiError, onAuthExpired, authEnabled }
+/**
+ * 当前身份是否仍然可用。
+ *
+ * 为什么需要它：EventSource 的 onerror 只告诉你「连接挂了」，拿不到 HTTP 状态码，
+ * 因此无法分辨「节点离线」与「令牌已被吊销 / 过期」。不加区分地重试，会让被吊销的
+ * 临时链接永远停在「正在连接节点」上 —— 用户既进不去，也看不到可行动的提示。
+ *
+ * 建连失败时问一次本接口即可把后者识别出来（失效原因由后端给出 code）。
+ *
+ * @param {object} [opts]
+ * @param {boolean} [opts.notify] 身份失效时是否触发 onAuthExpired 回调
+ * @returns {Promise<{valid:boolean, code:string}>}
+ */
+export async function verifyIdentity(opts = {}) {
+  const { notify = false } = opts
+  try {
+    const d = await request('/custom/auth/verify', { timeout: 10000 })
+    if (d && d.valid === false) {
+      const code = d.code || ErrCode.TOKEN_EXPIRED
+      if (notify) notifyAuthExpired(code)
+      return { valid: false, code }
+    }
+    return { valid: true, code: '' }
+  } catch (e) {
+    // 本接口自身请求失败（网络不通 / 超时）不代表身份失效，
+    // 不能据此把用户踢下线，交由上层按「节点不可达」处理。
+    return { valid: true, code: '', error: e?.code || '' }
+  }
+}
+
+export default { request, createEventSource, authedUrl, isSameOrigin, verifyIdentity, ErrCode, ErrMessage, ApiError, onAuthExpired, authEnabled }

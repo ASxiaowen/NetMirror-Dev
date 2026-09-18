@@ -6,7 +6,8 @@
 //
 //   - **无状态令牌**：HMAC-SHA256 签名，形如 base64url(payload).base64url(sig)。
 //     不在服务端存会话，进程重启不掉线，多机共享同一 AUTH_SECRET 即可互认。
-//   - **口令来自环境变量**：PANEL_PASSWORD 由部署方注入，不写进任何配置文件（规范第 4 条）。
+//   - **账号密码来自环境变量**：PANEL_USER / PANEL_PASSWORD 由部署方注入，
+//     不写进任何配置文件（规范第 4 条）。默认账号 admin。
 //   - **降级为开放**：未配置 PANEL_PASSWORD 时整个登录门自动关闭并打警告，
 //     这样任何已有部署升级后都不会被锁在门外。
 //   - **跨主机可用**：令牌里带 scope.nodeUrl，任意节点只要用同一个 AUTH_SECRET，
@@ -25,7 +26,9 @@ import (
 type Config struct {
 	// Enabled 是否启用登录门。由 PANEL_PASSWORD 是否存在决定，可被 AUTH_ENABLED 强制关闭。
 	Enabled bool
-	// Password 登录口令（环境变量 PANEL_PASSWORD）。
+	// Username 登录账号（环境变量 PANEL_USER），缺省 admin。
+	Username string
+	// Password 登录密码（环境变量 PANEL_PASSWORD）。
 	Password string
 	// Secret 令牌签名密钥。来自 AUTH_SECRET；缺省时由口令派生（可用但不推荐）。
 	Secret []byte
@@ -35,6 +38,9 @@ type Config struct {
 	// 默认 false —— 节点发现属于元数据，且多节点聚合时中心面板需要读取。
 	ProtectNodes bool
 }
+
+// DefUsername 未配置 PANEL_USER 时使用的账号名。
+const DefUsername = "admin"
 
 // Cfg 进程级配置，包初始化时读取一次。
 var Cfg = loadConfig()
@@ -69,14 +75,19 @@ func envInt(key string, def int) int {
 
 func loadConfig() *Config {
 	pwd := envStr("PANEL_PASSWORD")
+	user := envStr("PANEL_USER")
+	if user == "" {
+		user = DefUsername
+	}
 
-	// 有口令才谈得上启用；AUTH_ENABLED 只能把它关掉，不能凭空打开
+	// 有密码才谈得上启用；AUTH_ENABLED 只能把它关掉，不能凭空打开
 	enabled := pwd != "" && envBool("AUTH_ENABLED", true)
 
 	ttl := envInt("AUTH_TOKEN_TTL_HOURS", 168)
 
 	c := &Config{
 		Enabled:       enabled,
+		Username:      user,
 		Password:      pwd,
 		TokenTTLHours: ttl,
 		ProtectNodes:  envBool("AUTH_PROTECT_NODES", false),
@@ -86,17 +97,17 @@ func loadConfig() *Config {
 		sum := sha256.Sum256([]byte(sec))
 		c.Secret = sum[:]
 	} else if pwd != "" {
-		// 由口令派生，保证同一口令的多台机器能互认；换口令即全端下线
+		// 由密码派生，保证同一密码的多台机器能互认；换密码即全端下线
 		sum := sha256.Sum256([]byte("als-custom-auth::" + pwd))
 		c.Secret = sum[:]
 	}
 
 	if c.Enabled {
 		if envStr("AUTH_SECRET") == "" {
-			log.Println("[custom/auth] 登录门已启用（口令来自 PANEL_PASSWORD）。未设置 AUTH_SECRET，" +
-				"当前由口令派生签名密钥；跨机部署请显式设置相同的 AUTH_SECRET。")
+			log.Printf("[custom/auth] 登录门已启用（账号 %q，密码来自 PANEL_PASSWORD）。未设置 AUTH_SECRET，"+
+				"当前由密码派生签名密钥；跨机部署请显式设置相同的 AUTH_SECRET。\n", c.Username)
 		} else {
-			log.Println("[custom/auth] 登录门已启用（PANEL_PASSWORD + AUTH_SECRET）。")
+			log.Printf("[custom/auth] 登录门已启用（账号 %q + PANEL_PASSWORD + AUTH_SECRET）。\n", c.Username)
 		}
 	} else {
 		log.Println("[custom/auth] 登录门未启用：未配置 PANEL_PASSWORD 或 AUTH_ENABLED=false，" +

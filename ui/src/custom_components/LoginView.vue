@@ -13,27 +13,32 @@ const emit = defineEmits(['success'])
 
 const { login, loading, error, config } = useAuth()
 
+const username = ref('')
 const password = ref('')
-const inputRef = ref(null)
+const userRef = ref(null)
+const passRef = ref(null)
 /** 连续失败次数，达到阈值后给出更明确的引导（减少反复试错的挫败感） */
 const attempts = ref(0)
 
 const submit = async () => {
   if (loading.value) return
-  const ok = await login(password.value)
+  const ok = await login(username.value.trim(), password.value)
   if (ok) {
     attempts.value = 0
     emit('success')
     return
   }
   attempts.value += 1
+  // 只清密码，保留账号 —— 手误多半出在密码，重输账号很烦
   password.value = ''
   await nextTick()
-  inputRef.value?.focus()
+  passRef.value?.focus()
 }
 
 onMounted(() => {
-  inputRef.value?.focus()
+  // 有账号时直接聚焦密码框，省一次点击
+  if (username.value) passRef.value?.focus()
+  else userRef.value?.focus()
 })
 </script>
 
@@ -71,7 +76,7 @@ onMounted(() => {
               访问受限
             </h1>
             <p class="mt-0.5 text-[12px] text-gray-500 dark:text-gray-400">
-              请输入访问口令以继续使用面板
+              请登录以继续使用面板
             </p>
           </div>
         </div>
@@ -79,19 +84,41 @@ onMounted(() => {
         <form @submit.prevent="submit" class="space-y-3">
           <div>
             <label
+              for="nm-panel-username"
+              class="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-500"
+            >
+              账号
+            </label>
+            <input
+              id="nm-panel-username"
+              ref="userRef"
+              v-model="username"
+              type="text"
+              autocomplete="username"
+              autocapitalize="off"
+              autocorrect="off"
+              spellcheck="false"
+              :disabled="loading"
+              placeholder="请输入账号"
+              class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-[13px] text-gray-800 outline-none transition-colors placeholder:text-gray-400 focus:border-primary-400 focus:ring-2 focus:ring-primary-100 disabled:opacity-60 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-100 dark:placeholder:text-gray-600 dark:focus:border-primary-500/50 dark:focus:ring-primary-500/10"
+            />
+          </div>
+
+          <div>
+            <label
               for="nm-panel-password"
               class="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-500"
             >
-              访问口令
+              密码
             </label>
             <input
               id="nm-panel-password"
-              ref="inputRef"
+              ref="passRef"
               v-model="password"
               type="password"
               autocomplete="current-password"
               :disabled="loading"
-              placeholder="请输入口令"
+              placeholder="请输入密码"
               class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 font-mono text-[13px] text-gray-800 outline-none transition-colors placeholder:font-sans placeholder:text-gray-400 focus:border-primary-400 focus:ring-2 focus:ring-primary-100 disabled:opacity-60 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-100 dark:placeholder:text-gray-600 dark:focus:border-primary-500/50 dark:focus:ring-primary-500/10"
             />
           </div>
@@ -114,7 +141,7 @@ onMounted(() => {
 
           <button
             type="submit"
-            :disabled="loading || !password"
+            :disabled="loading || !username || !password"
             class="flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-b from-primary-500 to-primary-600 px-4 py-2.5 text-[13px] font-medium text-white shadow-soft transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lift disabled:translate-y-0 disabled:opacity-50 disabled:shadow-none"
           >
             <div
@@ -130,8 +157,10 @@ onMounted(() => {
           class="mt-5 space-y-1.5 border-t border-gray-200/70 pt-4 text-[11px] leading-relaxed text-gray-400 dark:border-white/[0.06] dark:text-gray-500"
         >
           <p>登录状态有效期约 {{ Math.round((config.tokenTtlHours || 168) / 24) }} 天。</p>
-          <p v-if="attempts >= 3">口令由后端 PANEL_PASSWORD 环境变量设定，遗忘请联系管理员重置。</p>
-          <p>如果收到的是临时测试链接，直接打开该链接即可，无需在此登录。</p>
+          <p v-if="attempts >= 3">
+            账号由 PANEL_USER、密码由 PANEL_PASSWORD 环境变量设定，遗忘请联系管理员重置。
+          </p>
+          <p>如果收到的是临时测试链接，直接打开该链接并输入对方给你的临时密码即可，无需在此登录。</p>
         </div>
       </div>
     </div>

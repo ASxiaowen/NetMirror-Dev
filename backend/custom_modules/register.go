@@ -37,9 +37,9 @@ func Register(e *gin.Engine) {
 	// 4) 自定义接口
 	g := e.Group("/custom")
 	auth.RegisterRoutes(g)  // /custom/auth/{config,login,verify,logout}
-	share.RegisterRoutes(g) // /custom/share[...]、/custom/link/:token
+	share.RegisterRoutes(g) // /custom/share[...]（需登录）、/custom/sharelink/*（放行）
 
-	// 5) 临时链接落地页：/t/<token> 直接返回前端入口页。
+	// 5) 临时链接落地页：/t/<id> 直接返回前端入口页。
 	//    上游只给 "/" 注册了 index.html，而临时链接是 /t/xxx 这样的路径，
 	//    不在前端路由内（本项目是单页无 router），必须由后端把入口页吐出来。
 	e.GET("/t/:token", serveIndexHTML)
@@ -51,10 +51,10 @@ func Register(e *gin.Engine) {
 // 我们的模块无法调用；这里按同样的思路重新实现一遍，读取的仍是同一份
 // 内嵌资源（iEmbed.UIStaticFiles），不复制任何文件。
 //
-// 注意：这里**刻意不校验 token**，任何 /t/<任意串> 都返回入口页。
+// 注意：这里**刻意不校验链接 id**，任何 /t/<任意串> 都返回入口页。
 // 理由：返回的只是一份与 "/" 完全相同的 SPA 外壳，不含任何业务数据，
-// 真正的鉴权发生在 API 层（/custom/link/<token> 与 /session、/method/*）。
-// 若在这里对无效 token 直接返回 401，浏览器会渲染一段裸 JSON，
+// 真正的校验发生在 API 层（/custom/sharelink/info 与 redeem）。
+// 若在这里对无效 id 直接返回 401，浏览器会渲染一段裸 JSON，
 // 而保留 200 能让前端把「链接已过期 / 已被吊销」渲染成一张正常的中文提示卡片。
 func serveIndexHTML(c *gin.Context) {
 	sub, err := fs.Sub(iEmbed.UIStaticFiles, "ui")

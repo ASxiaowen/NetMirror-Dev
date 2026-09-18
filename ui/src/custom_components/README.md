@@ -21,14 +21,15 @@
 
 | 文件 | 作用 | 被哪些原文件引用 |
 | --- | --- | --- |
-| `authState.js` | 令牌与临时链接作用域的唯一真相源（localStorage 持久化、`authHeaders()`、`appendToken()`） | apiClient.js, Librespeed.vue, useShare.js |
-| `apiClient.js` | **统一 API 层**：axios 实例 + EventSource 工厂 + 错误分类（`ApiError` / `ErrCode`） | stores/app.js, stores/nodes.js, useNodeSession.js |
-| `useAuth.js` | 登录态编排：探测后端是否启用登录门、登录/登出、口令错误提示 | RootShell.vue, LoginView.vue |
-| `useShare.js` | 临时链接编排：创建/列表/吊销/解析、`restrictedNode()`、`shareToolAllowed()` | RootShell.vue, ShareAdminDialog.vue, App.vue, Utilities.vue, Speedtest.vue, stores/nodes.js, stores/app.js |
-| `LoginView.vue` | 登录页（沿用 `.lg-card` 视觉，深浅主题跟随） | RootShell.vue |
-| `ShareBanner.vue` | 受限模式顶部提示条（含剩余有效期倒计时） | RootShell.vue |
-| `ShareAdminDialog.vue` | 临时链接管理弹窗（选节点、勾工具、设有效期、复制、吊销） | RootShell.vue |
-| `RootShell.vue` | **三态应用外壳**：登录页 / 临时链接受限模式 / 原 `App.vue` | main.js（挂载它而非 App.vue） |
+| `authState.js` | 令牌与临时链接作用域的唯一真相源。登录令牌存 localStorage；临时链接令牌按链接 id 存 **sessionStorage**（关掉标签页即消失，且多条链接互不覆盖） | apiClient.js, Librespeed.vue, useShare.js, RootShell.vue |
+| `apiClient.js` | **统一 API 层**：axios 实例 + EventSource 工厂 + 身份探活（`verifyIdentity`）+ 错误分类（`ApiError` / `ErrCode`） | stores/app.js, stores/nodes.js, useNodeSession.js, useAuth.js, useShare.js |
+| `useAuth.js` | 登录态编排：探测登录门、账号+密码登录/登出、校验已有令牌 | RootShell.vue, LoginView.vue |
+| `useShare.js` | 临时链接编排：管理侧（创建/列表/吊销）与访客侧（查信息/兑换）；`restrictedNode()`、`shareToolAllowed()` | RootShell.vue, SharePasswordView.vue, ShareAdminDialog.vue, App.vue, Utilities.vue, Speedtest.vue, stores/nodes.js, stores/app.js |
+| `LoginView.vue` | 登录页（账号 + 密码，沿用 `.lg-card` 视觉，深浅主题跟随） | RootShell.vue |
+| `SharePasswordView.vue` | **临时密码页**：先展示「这条链接给了什么」（节点/备注/可用功能/剩余有效），再要求输密码 | RootShell.vue |
+| `ShareBanner.vue` | 受限模式顶部提示条（含剩余有效期倒计时，归零时上报过期） | RootShell.vue |
+| `ShareAdminDialog.vue` | 临时链接管理弹窗（选节点、勾工具、设有效期；生成后**链接与密码分两行**各带复制按钮，并提示分开发送） | RootShell.vue |
+| `RootShell.vue` | **多态应用外壳**：loading / 登录页 / 临时密码页 / 失效卡片 / 原 `App.vue`（含受限模式） | main.js（挂载它而非 App.vue） |
 
 ### 二、既有定制（第一轮重构）
 
@@ -63,7 +64,8 @@
 
 ## 受限模式（临时链接）的作用范围
 
-访客打开 `/t/<token>` 时，`RootShell` 进入受限模式，由三条独立机制共同收敛权限：
+访客打开 `/t/<id>` 时先看到**临时密码页**（展示这条链接绑了哪台机器、能做哪些事、
+还剩多久），输入对方单独发来的密码后 `RootShell` 进入受限模式，由四条独立机制共同收敛权限：
 
 1. **区块级**（`App.vue`）—— 未授权的区块整块不渲染，避免留下空卡片。
 2. **工具级**（`Utilities.vue` / `Speedtest.vue`）—— 未授权的工具不进网格。
@@ -73,7 +75,26 @@
    唯一的绑定节点，SSE 与工具请求全部只指向它，访客无法切换到别的节点。
 
 > 前端只是「不给入口」，**真正的权限判定在后端** `custom_modules/auth` 的守卫里
-> （节点归属 + 工具白名单）。前端过滤被绕过也不影响安全。
+> （吊销名单 + 节点归属 + 工具白名单）。前端过滤被绕过也不影响安全。
+
+## 两条身份链路（互不干扰）
+
+```
+自己人   账号 + 密码        → user  令牌（localStorage，整站可用）
+访客     链接 + 临时密码     → share 令牌（sessionStorage，按链接 id 分键，仅限绑定节点与授权工具）
+```
+
+打开分享链接时**临时链接优先于既有登录态** —— 否则访客会以上一个管理员的身份看到整站，
+权限模型就失效了。
+
+## 两个容易踩的时序点
+
+1. **`/custom/auth/verify` 属于「永远放行」路径**，守卫不会为它做作用域校验。
+   因此被吊销的临时链接必须在 verify 内部再查一次吊销名单，否则令牌在自然到期前
+   始终「有效」，前端刷新页面会直接进受限模式，表现为一直连不上节点。
+2. **SSE 的 `onerror` 拿不到 HTTP 状态码**，无法区分「节点离线」与「令牌已失效」。
+   `useNodeSession` 在建连失败后先调一次 `verifyIdentity()`；身份已失效就跳出重试，
+   由外壳给出「链接已被吊销 / 已过期」的明确提示，而不是无限重试。
 
 ## 冲突演练
 
